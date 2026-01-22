@@ -1,0 +1,39 @@
+services:
+  rag-system:
+    build: .
+    ports:
+      - "7860:7860"
+    volumes:
+      - ./data:/app/data
+      - rag_chroma_db:/app/chroma_db
+      - rag_metadata:/app/metadata.db
+    environment:
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
+      - LLM_MODEL=${LLM_MODEL:-llama3.1:8b}
+      - EMBEDDING_MODE=${EMBEDDING_MODE:-local}
+      - OLLAMA_BASE_URL=http://ollama:11434
+    depends_on:
+      - ollama
+    networks:
+      - rag-network
+
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - rag-network
+    # Pull models on startup (optional, can be slow)
+    # entrypoint: ["/bin/sh", "-c", "ollama serve & sleep 5 && ollama pull llama3.1:8b && ollama pull nomic-embed-text && wait"]
+
+volumes:
+  ollama_data:
+  rag_chroma_db:
+  rag_metadata:
+
+networks:
+  rag-network:
+    driver: bridge

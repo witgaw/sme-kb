@@ -1,0 +1,73 @@
+[project]
+name = "sme-kb"
+version = "0.1.0"
+description = "Minimal RAG system with LangGraph"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "langchain-core>=0.3.0",
+    "langchain-text-splitters>=0.3.0",
+    "langgraph>=0.2.0",
+    "chromadb>=0.5.0",
+    "sentence-transformers>=3.0.0",
+    "einops>=0.7.0",
+    "gradio>=6.0.0",
+    "openai>=1.10.0",
+    "python-docx>=1.1.0",
+    "openpyxl>=3.1.2",
+    "python-pptx>=0.6.23",
+    "pymupdf>=1.24.0",
+    "click>=8.1.7",
+    "pydantic>=2.5.3",
+    "pydantic-settings>=2.1.0",
+    "httpx>=0.27.0",
+    "sme-synth-data-gen @ git+https://github.com/witgaw/sme-synth-data-gen.git",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.4",
+    "pytest-cov>=4.1.0",
+    "ruff>=0.8.0",
+    "mypy>=1.8.0",
+]
+
+[project.scripts]
+# Main CLI group (use: uv run rag <command>)
+rag = "ui.cli:cli"
+# Direct commands (use: uv run serve, uv run ingest, etc.)
+serve = "ui.cli:serve"
+ingest = "ui.cli:ingest"
+query = "ui.cli:query"
+retrieve = "ui.cli:retrieve"
+stats = "ui.cli:stats"
+evaluate = "ui.cli:evaluate"
+clear = "ui.cli:clear"
+test = "pytest:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["config", "ingestion", "storage", "retrieval", "generation", "pipeline", "ui", "eval"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --cov-report=term-missing"
+filterwarnings = [
+    "ignore:builtin type Swig.*has no __module__ attribute:DeprecationWarning",
+]

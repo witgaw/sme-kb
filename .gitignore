@@ -1,0 +1,25 @@
+# Python
+*.pyc
+__pycache__
+*.egg-info
+dist
+build
+
+# Virtual environment
+.venv
+
+# Environment variables
+.env
+
+# Databases and storage
+chroma_db
+*.db
+*.bin
+
+# Testing and coverage
+.coverage
+.pytest_cache
+
+# Linters and formatters
+.ruff_cache
+.mypy_cache
