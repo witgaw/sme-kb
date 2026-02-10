@@ -1,5 +1,6 @@
 """Gradio web UI for RAG system - Chat interface."""
 
+import html as html_lib
 import json
 import tempfile
 from pathlib import Path
@@ -184,19 +185,22 @@ class RAGInterface:
             self.last_sources = []
             return history, "*No sources*"
 
-    def _format_prompt_details(self, prompt: str = "", usage: dict[str, int] | None = None) -> str:
-        """Format prompt and usage details."""
-        if not prompt and not usage:
+    def _format_prompt_details(
+        self,
+        prompt: str = "",
+        usage: dict[str, int] | None = None,
+        conversation_history: list[dict] | None = None,
+    ) -> str:
+        """Format prompt, usage, and conversation history details."""
+        if not prompt and not usage and not conversation_history:
             return "*No details available*"
 
         parts = []
 
-        # Add token usage if available
         if usage:
             prompt_tokens = usage.get("prompt_tokens", 0)
             completion_tokens = usage.get("completion_tokens", 0)
             total_tokens = usage.get("total_tokens", 0)
-
             parts.append("### Token Usage")
             parts.append("")
             parts.append(f"- **Input tokens:** {prompt_tokens:,}")
@@ -204,7 +208,16 @@ class RAGInterface:
             parts.append(f"- **Total tokens:** {total_tokens:,}")
             parts.append("")
 
-        # Add full prompt if available
+        if conversation_history:
+            n_turns = len(conversation_history) // 2
+            parts.append(f"### Conversation History ({n_turns} prior turn(s))")
+            parts.append("")
+            for msg in conversation_history:
+                role = msg.get("role", "?").upper()
+                content = msg.get("content", "")
+                parts.append(f"**{role}:** {content}")
+                parts.append("")
+
         if prompt:
             parts.append("### Full Prompt")
             parts.append("")
@@ -215,60 +228,60 @@ class RAGInterface:
 
         return "\n".join(parts)
 
-    def _format_sources(self, sources: list[dict] | None = None, show_full: bool = True) -> str:
-        """Format sources display with full chunk content and metadata.
-
-        Args:
-            sources: List of source chunks.
-            show_full: If True, show full chunk content. If False, show preview only.
-        """
+    def _format_sources_html(self, sources: list[dict] | None = None) -> str:
+        """Format sources as collapsible HTML details elements."""
         if not sources:
-            return "*No sources*"
+            return "<p><em>No sources</em></p>"
 
         # Group chunks by document
-        docs = {}
+        docs: dict[str, list[dict]] = {}
         for chunk in sources:
             source = chunk.get("source", "unknown")
             if source not in docs:
                 docs[source] = []
             docs[source].append(chunk)
 
-        parts = []
+        html_parts = []
         for source, chunks in docs.items():
             ext = Path(source).suffix.lower()
             icon = FILE_ICONS.get(ext, "[FILE]")
             name = Path(source).name
-            parts.append(f"### {icon} {name}")
-            parts.append("")
 
             for i, chunk in enumerate(chunks, 1):
                 content = chunk.get("content", "")
+                preview = content.replace("\n", " ")[:120]
+                if len(content) > 120:
+                    preview += "..."
 
-                # Show metadata if available
-                metadata_parts = []
+                meta_parts = []
                 if "distance" in chunk:
-                    metadata_parts.append(f"Distance: {chunk['distance']:.3f}")
+                    meta_parts.append(f"dist: {chunk['distance']:.3f}")
                 if "rerank_score" in chunk:
-                    metadata_parts.append(f"Rerank: {chunk['rerank_score']:.3f}")
+                    meta_parts.append(f"rerank: {chunk['rerank_score']:.3f}")
+                meta_str = f" <small>({', '.join(meta_parts)})</small>" if meta_parts else ""
 
-                if metadata_parts:
-                    parts.append(f"**Chunk {i}** ({', '.join(metadata_parts)})")
-                else:
-                    parts.append(f"**Chunk {i}**")
+                escaped_content = html_lib.escape(content)
+                escaped_preview = html_lib.escape(preview)
+                escaped_name = html_lib.escape(name)
 
-                if show_full:
-                    # Show full content in code block for readability
-                    parts.append("```")
-                    parts.append(content)
-                    parts.append("```")
-                else:
-                    # Show preview only
-                    preview = content.replace("\n", " ")[:200]
-                    parts.append(f"_{preview}..._")
+                html_parts.append(
+                    f'<details style="margin-bottom:0.4rem;border:1px solid #e5e7eb;'
+                    f'border-radius:6px;overflow:hidden;">'
+                    f'<summary style="cursor:pointer;padding:0.5rem 0.75rem;'
+                    f'background:#f9fafb;font-family:monospace;font-size:0.875rem;'
+                    f'list-style:none;display:flex;justify-content:space-between;'
+                    f'align-items:flex-start;gap:0.5rem;">'
+                    f'<span><strong>{icon} {escaped_name}</strong> #{i}{meta_str}</span>'
+                    f'<span style="color:#6b7280;font-weight:normal;flex-shrink:0;">'
+                    f'{escaped_preview}</span>'
+                    f"</summary>"
+                    f'<pre style="margin:0;padding:0.75rem;white-space:pre-wrap;'
+                    f'font-size:0.825rem;background:#fff;border-top:1px solid #e5e7eb;">'
+                    f"{escaped_content}</pre>"
+                    f"</details>"
+                )
 
-                parts.append("")
-
-        return "\n".join(parts)
+        return "\n".join(html_parts)
 
     def load_demo(self, progress=gr.Progress()) -> str:
         """Load demo data."""
@@ -408,7 +421,8 @@ class RAGInterface:
         """Toggle conversation history mode."""
         self.history_enabled = enabled
         if not enabled:
-            self.clear_conversation_history()
+            # Only reset LLM context — keep message_metadata so details panel stays intact
+            self.conversation_history = []
 
     def examples(self) -> list[str]:
         try:
@@ -456,6 +470,8 @@ CSS = """
     text-align: center;
     margin: 0.5rem 0;
 }
+/* User chat bubbles are not clickable */
+.user-row, .user-row * { cursor: default !important; }
 /* Loading overlay */
 .loading-overlay {
     position: fixed !important;
@@ -692,7 +708,7 @@ def launch_ui(server_name: str = "0.0.0.0", server_port: int = 7860):
 
             with gr.Tabs():
                 with gr.Tab("Sources"):
-                    sources = gr.Markdown("*Click on a message to see sources*")
+                    sources = gr.HTML("<p><em>Click on a message to see sources</em></p>")
 
                 with gr.Tab("Prompt & Usage"):
                     prompt_details = gr.Markdown("*Click on a message to see prompt details*")
@@ -799,22 +815,28 @@ def launch_ui(server_name: str = "0.0.0.0", server_port: int = 7860):
 
             meta = ui.message_metadata[metadata_idx]
 
-            # Build header showing question and answer preview
-            question = meta["query"]
-            answer = meta["answer"]
-            question_preview = question[:80] + "..." if len(question) > 80 else question
-            answer_preview = answer[:80] + "..." if len(answer) > 80 else answer
+            label_parts = [f"**Response #{metadata_idx + 1}**", ""]
+            history = meta.get("conversation_history", [])
+            for i in range(0, len(history) - 1, 2):
+                label_parts.append(f"**Q:** {history[i].get('content', '')}")
+                label_parts.append("")
+                label_parts.append(f"**A:** {history[i + 1].get('content', '')}")
+                label_parts.append("")
+                label_parts.append("---")
+                label_parts.append("")
+            label_parts.append(f"**Q:** {meta['query']}")
+            label_parts.append("")
+            label_parts.append(f"**A:** {meta['answer']}")
+            message_label = "\n".join(label_parts)
 
-            message_label = f"""**Response #{metadata_idx + 1}**
+            sources_html = ui._format_sources_html(meta["sources"])
+            details_text = ui._format_prompt_details(
+                meta["prompt"],
+                meta["usage"],
+                meta.get("conversation_history"),
+            )
 
-**Q:** {question_preview}
-
-**A:** {answer_preview}"""
-
-            sources_text = ui._format_sources(meta["sources"])
-            details_text = ui._format_prompt_details(meta["prompt"], meta["usage"])
-
-            return message_label, sources_text, details_text
+            return message_label, sources_html, details_text
 
         chatbot.select(
             fn=show_message_details,
@@ -850,9 +872,12 @@ def launch_ui(server_name: str = "0.0.0.0", server_port: int = 7860):
                 last_msg = history[-1]
                 if isinstance(last_msg, dict):
                     content = last_msg.get("content", "")
-                    # Handle case where content might be a list
+                    # Handle case where content might be a list of dicts (Gradio multimodal)
                     if isinstance(content, list):
-                        user_msg = " ".join(str(c) for c in content)
+                        user_msg = " ".join(
+                            c.get("text", str(c)) if isinstance(c, dict) else str(c)
+                            for c in content
+                        )
                     else:
                         user_msg = str(content) if content else ""
                 else:
@@ -886,6 +911,7 @@ def launch_ui(server_name: str = "0.0.0.0", server_port: int = 7860):
                     "usage": result.get("usage", {}),
                     "query": user_msg.strip(),
                     "answer": answer,
+                    "conversation_history": list(conv_history) if conv_history else [],
                 }
                 ui.message_metadata.append(metadata)
 
