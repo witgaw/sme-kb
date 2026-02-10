@@ -1,0 +1,5 @@
+{
+  "provider": "Ollama",
+  "model": "qwen2.5:7b",
+  "top_k": 20
+}

@@ -67,11 +67,23 @@ class VectorStore:
         Returns:
             Dict with ids, documents, metadatas, and distances.
         """
-        results = self.collection.query(
-            query_embeddings=[query_embedding],
-            n_results=top_k,
-            where=filter_dict,
-        )
+        try:
+            results = self.collection.query(
+                query_embeddings=[query_embedding],
+                n_results=top_k,
+                where=filter_dict,
+            )
+        except chromadb.errors.NotFoundError:
+            # Collection was recreated by another instance; refresh reference
+            self.collection = self.client.get_or_create_collection(
+                name="documents",
+                metadata={"hnsw:space": "cosine"},
+            )
+            results = self.collection.query(
+                query_embeddings=[query_embedding],
+                n_results=top_k,
+                where=filter_dict,
+            )
         return results
 
     def count(self) -> int:

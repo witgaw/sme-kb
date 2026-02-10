@@ -13,6 +13,28 @@ from config import get_config
 from ingestion import DocumentIngester
 from storage.metadata_db import MetadataDB
 
+
+def _ask_directory() -> str:
+    """Open the native macOS folder picker via osascript."""
+    import subprocess
+
+    try:
+        proc = subprocess.run(
+            [
+                "osascript", "-e",
+                'POSIX path of (choose folder with prompt "Select folder to ingest")',
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        path = proc.stdout.strip()
+        # osascript returns path with trailing slash
+        return path.rstrip("/") if path else ""
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return ""
+
+
 FILE_ICONS = {
     ".pdf": "[PDF]",
     ".docx": "[DOC]",
@@ -22,6 +44,38 @@ FILE_ICONS = {
     ".txt": "[TXT]",
     ".eml": "[EML]",
 }
+
+_SETTINGS_DEFAULTS: dict[str, Any] = {
+    "provider": "Ollama",
+    "model": "",
+    "top_k": 20,
+}
+
+
+def _settings_path() -> Path:
+    return Path(get_config().metadata_db_path).parent / "ui_settings.json"
+
+
+def _load_settings() -> dict[str, Any]:
+    try:
+        p = _settings_path()
+        if p.exists():
+            data = json.loads(p.read_text())
+            return {**_SETTINGS_DEFAULTS, **data}
+    except Exception:
+        pass
+    return dict(_SETTINGS_DEFAULTS)
+
+
+def _save_settings(updates: dict[str, Any]) -> None:
+    try:
+        current = _load_settings()
+        current.update(updates)
+        _settings_path().write_text(json.dumps(current, indent=2))
+    except Exception:
+        pass
+
+
 
 
 def check_ollama(base_url: str, model: str) -> tuple[bool, str]:
@@ -62,6 +116,17 @@ class RAGInterface:
         self.conversation_history: list[dict[str, str]] = []
         self.history_enabled: bool = False
         self.message_metadata: list[dict[str, Any]] = []
+        self.session_input_tokens: int = 0
+        self.session_output_tokens: int = 0
+
+    def get_token_stats_md(self) -> str:
+        """Return session token usage as a short markdown string."""
+        if self.session_input_tokens == 0 and self.session_output_tokens == 0:
+            return ""
+        return (
+            f"*Session tokens — in: {self.session_input_tokens:,} "
+            f"/ out: {self.session_output_tokens:,}*"
+        )
 
     def get_ollama_models(self) -> list[tuple[str, str]]:
         """Get list of installed Ollama models."""
@@ -432,9 +497,11 @@ class RAGInterface:
             return f"[X] {type(e).__name__}: {e}"
 
     def clear_conversation_history(self) -> None:
-        """Clear conversation history and message metadata."""
+        """Clear conversation history, message metadata, and session token counts."""
         self.conversation_history = []
         self.message_metadata = []
+        self.session_input_tokens = 0
+        self.session_output_tokens = 0
 
     def toggle_history_mode(self, enabled: bool) -> None:
         """Toggle conversation history mode."""
@@ -491,6 +558,10 @@ CSS = """
 }
 /* User chat bubbles are not clickable */
 .user-row, .user-row * { cursor: default !important; }
+/* Token stats */
+.token-stats { font-size: 0.75rem; opacity: 0.6; text-align: right; margin-top: 0.25rem; }
+/* Browse button */
+.browse-btn button { font-family: monospace; letter-spacing: 0.05em; }
 /* Loading overlay */
 .loading-overlay {
     position: fixed !important;
@@ -584,6 +655,7 @@ def _log_startup_diagnostics() -> None:
 def launch_ui(server_name: str = "0.0.0.0", server_port: int = 7860):
     """Launch chat interface."""
     ui = RAGInterface()
+    saved = _load_settings()
 
     # Define the loading overlay HTML
     loading_overlay_html = (
@@ -625,6 +697,7 @@ def launch_ui(server_name: str = "0.0.0.0", server_port: int = 7860):
                     send = gr.Button("Send", scale=1, variant="primary")
 
                 clear = gr.Button("Clear Chat", size="sm")
+                token_stats = gr.Markdown("", elem_classes=["token-stats"])
 
             # Sidebar
             with gr.Column(scale=1):
@@ -639,27 +712,36 @@ def launch_ui(server_name: str = "0.0.0.0", server_port: int = 7860):
                     """
                 )
 
-                with gr.Accordion("Settings", open=True):
+                with gr.Accordion("Settings", open=False):
                     provider = gr.Radio(
                         ["Ollama", "OpenRouter"],
-                        value="Ollama",
+                        value=saved["provider"],
                         label="Provider",
                     )
 
-                    # Get initial Ollama models
-                    ollama_models = ui.get_ollama_models()
-                    default_ollama = ollama_models[0][1] if ollama_models else ""
+                    # Get initial model choices based on saved provider
+                    if saved["provider"] == "OpenRouter":
+                        initial_choices = ui.OPENROUTER_MODELS
+                        default_model = saved["model"] or "anthropic/claude-sonnet-4"
+                    else:
+                        initial_choices = ui.get_ollama_models()
+                        saved_m = saved["model"]
+                        model_vals = [v for _, v in initial_choices]
+                        default_model = (
+                            saved_m if saved_m in model_vals
+                            else (initial_choices[0][1] if initial_choices else "")
+                        )
 
                     model = gr.Dropdown(
-                        ollama_models,
-                        value=default_ollama,
+                        initial_choices,
+                        value=default_model,
                         label="Model",
                     )
                     custom = gr.Textbox(label="Custom model", visible=False)
                     init_btn = gr.Button("Initialize", variant="primary")
 
                     gr.Markdown("---")
-                    top_k = gr.Slider(1, 50, 10, step=1, label="Retrieval chunks")
+                    top_k = gr.Slider(1, 50, saved["top_k"], step=1, label="Retrieval chunks")
 
                     history_toggle = gr.Checkbox(
                         label="Enable conversation history",
@@ -697,14 +779,24 @@ def launch_ui(server_name: str = "0.0.0.0", server_port: int = 7860):
                     fn=ui.toggle_history_mode,
                     inputs=history_toggle,
                 )
+                top_k.change(
+                    fn=lambda v: _save_settings({"top_k": v}),
+                    inputs=top_k,
+                )
 
-                with gr.Accordion("Data", open=False):
+                with gr.Accordion("Data", open=False, elem_id="data-accordion") as data_acc:
                     data_status = gr.Markdown("")
-                    ingest_path = gr.Textbox(
-                        label="Directory path",
-                        placeholder="/path/to/docs",
-                        show_label=False,
-                    )
+                    with gr.Row():
+                        ingest_path = gr.Textbox(
+                            placeholder="/path/to/docs",
+                            show_label=False,
+                            scale=5,
+                            container=False,
+                        )
+                        browse_btn = gr.Button(
+                            "...", scale=1, size="sm", min_width=36,
+                            elem_classes=["browse-btn"],
+                        )
                     ingest_btn = gr.Button("Ingest Directory", size="sm", variant="secondary")
 
                     gr.Markdown("**OR**", elem_classes=["text-center"])
@@ -713,13 +805,13 @@ def launch_ui(server_name: str = "0.0.0.0", server_port: int = 7860):
                     gr.Markdown("---")
                     clear_data_btn = gr.Button("Clear All Data", size="sm", variant="stop")
 
-                    examples_acc = gr.Accordion("Example Questions", open=False, visible=False)
-                    with examples_acc:
-                        example_btns = []
-                        for ex in ui.examples():
-                            btn = gr.Button(ex, size="sm")
-                            btn.click(fn=lambda e=ex: e, outputs=msg)
-                            example_btns.append(btn)
+                with gr.Column(visible=False) as examples_col:
+                    gr.Markdown("**Example Questions**")
+                    example_btns = []
+                    for ex in ui.examples():
+                        btn = gr.Button(ex, size="sm")
+                        btn.click(fn=lambda e=ex: e, outputs=msg)
+                        example_btns.append(btn)
 
         # Message Details Section (full-width below chat)
         with gr.Accordion("Message Details", open=False):
@@ -743,6 +835,8 @@ def launch_ui(server_name: str = "0.0.0.0", server_port: int = 7860):
                     <div><strong>Error:</strong> {result}</div>
                 </div>
                 """
+            actual_model = cust.strip() if mod == "custom" else mod
+            _save_settings({"provider": prov, "model": actual_model})
             return ui.get_status_html()
 
         init_btn.click(
@@ -772,17 +866,37 @@ def launch_ui(server_name: str = "0.0.0.0", server_port: int = 7860):
 
         demo_btn.click(
             fn=lambda: ("Loading...", gr.update(visible=False)),
-            outputs=[data_status, examples_acc],
+            outputs=[data_status, examples_col],
         ).then(
             fn=ui.load_demo,
             outputs=data_status,
         ).then(
             fn=handle_demo_result,
             inputs=data_status,
-            outputs=[status, examples_acc],
+            outputs=[status, examples_col],
+        )
+
+        # Native OS folder picker → auto-ingest
+        browse_btn.click(
+            fn=_ask_directory,
+            outputs=ingest_path,
+        ).then(
+            fn=lambda p: "Ingesting..." if p.strip() else "",
+            inputs=ingest_path,
+            outputs=data_status,
+        ).then(
+            fn=ui.ingest_dir,
+            inputs=ingest_path,
+            outputs=data_status,
+        ).then(
+            fn=ui.get_status_html,
+            outputs=status,
         )
 
         ingest_btn.click(
+            fn=lambda: "Ingesting...",
+            outputs=data_status,
+        ).then(
             fn=ui.ingest_dir,
             inputs=ingest_path,
             outputs=data_status,
@@ -797,7 +911,7 @@ def launch_ui(server_name: str = "0.0.0.0", server_port: int = 7860):
 
         clear_data_btn.click(
             fn=clear_all_data,
-            outputs=[data_status, status, examples_acc],
+            outputs=[data_status, status, examples_col],
         )
 
         # Message details handlers
@@ -874,8 +988,9 @@ def launch_ui(server_name: str = "0.0.0.0", server_port: int = 7860):
 
         def get_bot_response(history, k, history_enabled, language):
             """Get bot response for the last user message."""
+            no_change = ui.get_token_stats_md()
             if not history or len(history) == 0:
-                return history
+                return history, no_change
 
             if not ui.rag:
                 history.append(
@@ -884,7 +999,7 @@ def launch_ui(server_name: str = "0.0.0.0", server_port: int = 7860):
                         "content": "System not initialized. Click 'Initialize' in Settings.",
                     }
                 )
-                return history
+                return history, no_change
 
             try:
                 # Get the last message - must be from user
@@ -905,7 +1020,7 @@ def launch_ui(server_name: str = "0.0.0.0", server_port: int = 7860):
                 # Validate message
                 if not user_msg or not user_msg.strip():
                     history.append({"role": "assistant", "content": "Please enter a question."})
-                    return history
+                    return history, no_change
 
                 # Determine what to send to pipeline
                 conv_history = ui.conversation_history if history_enabled else None
@@ -923,11 +1038,16 @@ def launch_ui(server_name: str = "0.0.0.0", server_port: int = 7860):
                 # Get answer without token count
                 answer = result["answer"]
 
+                # Accumulate session token usage
+                usage = result.get("usage", {})
+                ui.session_input_tokens += usage.get("prompt_tokens", 0)
+                ui.session_output_tokens += usage.get("completion_tokens", 0)
+
                 # Store metadata for this message
                 metadata = {
                     "sources": result.get("chunks", []),
                     "prompt": result.get("prompt", ""),
-                    "usage": result.get("usage", {}),
+                    "usage": usage,
                     "query": user_msg.strip(),
                     "answer": answer,
                     "conversation_history": list(conv_history) if conv_history else [],
@@ -939,16 +1059,14 @@ def launch_ui(server_name: str = "0.0.0.0", server_port: int = 7860):
                     ui.conversation_history.append({"role": "user", "content": user_msg.strip()})
                     ui.conversation_history.append({"role": "assistant", "content": answer})
 
-                # Add response to chat (without token count)
                 history.append({"role": "assistant", "content": answer})
-
-                return history
+                return history, ui.get_token_stats_md()
             except Exception as e:
                 import traceback
 
                 error_msg = f"Error: {e}\n{traceback.format_exc()}"
                 history.append({"role": "assistant", "content": error_msg})
-                return history
+                return history, ui.get_token_stats_md()
 
         # Disable send button and show loading in textbox while processing
         send.click(
@@ -958,7 +1076,7 @@ def launch_ui(server_name: str = "0.0.0.0", server_port: int = 7860):
         ).then(
             fn=get_bot_response,
             inputs=[chatbot, top_k, history_toggle, language_selector],
-            outputs=[chatbot],
+            outputs=[chatbot, token_stats],
         )
 
         msg.submit(
@@ -968,23 +1086,27 @@ def launch_ui(server_name: str = "0.0.0.0", server_port: int = 7860):
         ).then(
             fn=get_bot_response,
             inputs=[chatbot, top_k, history_toggle, language_selector],
-            outputs=[chatbot],
+            outputs=[chatbot, token_stats],
         )
 
         def clear_chat_and_history():
             ui.clear_conversation_history()
-            return [], ""
+            return [], "", ""
 
-        clear.click(fn=clear_chat_and_history, outputs=[chatbot, msg])
+        clear.click(fn=clear_chat_and_history, outputs=[chatbot, msg, token_stats])
 
         # Auto-initialize on page load
         def auto_init():
-            # Get first available Ollama model
-            ollama_models = ui.get_ollama_models()
-            default_model = ollama_models[0][1] if ollama_models else ""
+            s = _load_settings()
+            init_provider = s["provider"]
+            init_model = s["model"]
 
-            # Initialize model
-            init_result = ui.initialize("Ollama", default_model, "")
+            # Fall back to first available Ollama model if no saved model
+            if not init_model and init_provider == "Ollama":
+                ollama_models = ui.get_ollama_models()
+                init_model = ollama_models[0][1] if ollama_models else ""
+
+            init_result = ui.initialize(init_provider, init_model, "")
             if init_result.startswith("[X]"):
                 print(f"[warn] Auto-init failed: {init_result[4:]}")
 
@@ -1005,15 +1127,18 @@ def launch_ui(server_name: str = "0.0.0.0", server_port: int = 7860):
 
             _log_startup_diagnostics()
 
-            # Return status HTML, examples visibility, data message, hide loading overlay
             return (
                 ui.get_status_html(),
-                gr.update(visible=has_data),
+                gr.update(visible=has_data),  # examples col: show if data
                 data_msg,
-                gr.update(visible=False),  # Hide overlay after initialization
+                gr.update(visible=False),   # hide loading overlay
+                gr.update(open=False),      # data accordion: start collapsed
             )
 
-        demo.load(fn=auto_init, outputs=[status, examples_acc, data_status, loading_overlay])
+        demo.load(
+            fn=auto_init,
+            outputs=[status, examples_col, data_status, loading_overlay, data_acc],
+        )
 
     demo.launch(server_name=server_name, server_port=server_port, inbrowser=True, css=CSS)
 
