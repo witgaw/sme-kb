@@ -21,7 +21,8 @@ def _ask_directory() -> str:
     try:
         proc = subprocess.run(
             [
-                "osascript", "-e",
+                "osascript",
+                "-e",
                 'POSIX path of (choose folder with prompt "Select folder to ingest")',
             ],
             capture_output=True,
@@ -46,6 +47,7 @@ FILE_ICONS = {
 }
 
 _SETTINGS_DEFAULTS: dict[str, Any] = {
+    "rag_type": "basic",
     "provider": "Ollama",
     "model": "",
     "top_k": 20,
@@ -74,8 +76,6 @@ def _save_settings(updates: dict[str, Any]) -> None:
         _settings_path().write_text(json.dumps(current, indent=2))
     except Exception:
         pass
-
-
 
 
 def check_ollama(base_url: str, model: str) -> tuple[bool, str]:
@@ -713,6 +713,12 @@ def launch_ui(server_name: str = "0.0.0.0", server_port: int = 7860):
                 )
 
                 with gr.Accordion("Settings", open=False):
+                    rag_type = gr.Radio(
+                        [("Basic", "basic"), ("Knowledge Graph", "knowledge_graph")],
+                        value=saved["rag_type"],
+                        label="RAG Type",
+                    )
+
                     provider = gr.Radio(
                         ["Ollama", "OpenRouter"],
                         value=saved["provider"],
@@ -728,7 +734,8 @@ def launch_ui(server_name: str = "0.0.0.0", server_port: int = 7860):
                         saved_m = saved["model"]
                         model_vals = [v for _, v in initial_choices]
                         default_model = (
-                            saved_m if saved_m in model_vals
+                            saved_m
+                            if saved_m in model_vals
                             else (initial_choices[0][1] if initial_choices else "")
                         )
 
@@ -765,6 +772,10 @@ def launch_ui(server_name: str = "0.0.0.0", server_port: int = 7860):
                         value = "anthropic/claude-sonnet-4"
                     return gr.update(choices=choices, value=value)
 
+                rag_type.change(
+                    fn=lambda v: _save_settings({"rag_type": v}),
+                    inputs=rag_type,
+                )
                 provider.change(
                     fn=update_model_choices,
                     inputs=provider,
@@ -794,7 +805,10 @@ def launch_ui(server_name: str = "0.0.0.0", server_port: int = 7860):
                             container=False,
                         )
                         browse_btn = gr.Button(
-                            "...", scale=1, size="sm", min_width=36,
+                            "...",
+                            scale=1,
+                            size="sm",
+                            min_width=36,
                             elem_classes=["browse-btn"],
                         )
                     ingest_btn = gr.Button("Ingest Directory", size="sm", variant="secondary")
@@ -825,7 +839,15 @@ def launch_ui(server_name: str = "0.0.0.0", server_port: int = 7860):
                     prompt_details = gr.Markdown("*Click on a message to see prompt details*")
 
         # Initialize handler
-        def do_init(prov, mod, cust):
+        def do_init(prov, mod, cust, rt):
+            if rt == "knowledge_graph":
+                return """
+                <div style="background: #ef4444; border: 2px solid #dc2626; color: white;
+                            padding: 1rem 1.25rem; border-radius: 8px; font-family: monospace;
+                            margin-bottom: 1rem; font-size: 0.95rem;">
+                    <div><strong>Error:</strong> Knowledge Graph RAG is not yet supported.</div>
+                </div>
+                """
             result = ui.initialize(prov, mod, cust)
             if result.startswith("[X]"):
                 return f"""
@@ -852,7 +874,7 @@ def launch_ui(server_name: str = "0.0.0.0", server_port: int = 7860):
             outputs=status,
         ).then(
             fn=do_init,
-            inputs=[provider, model, custom],
+            inputs=[provider, model, custom, rag_type],
             outputs=status,
         )
 
@@ -986,19 +1008,18 @@ def launch_ui(server_name: str = "0.0.0.0", server_port: int = 7860):
             history.append({"role": "user", "content": message})
             return history, ""
 
-        def get_bot_response(history, k, history_enabled, language):
+        def get_bot_response(history, k, history_enabled, language, rt):
             """Get bot response for the last user message."""
             no_change = ui.get_token_stats_md()
             if not history or len(history) == 0:
                 return history, no_change
 
             if not ui.rag:
-                history.append(
-                    {
-                        "role": "assistant",
-                        "content": "System not initialized. Click 'Initialize' in Settings.",
-                    }
-                )
+                if rt == "knowledge_graph":
+                    msg = "Knowledge Graph RAG is not yet supported. Switch to Basic in Settings."
+                else:
+                    msg = "System not initialized. Click 'Initialize' in Settings."
+                history.append({"role": "assistant", "content": msg})
                 return history, no_change
 
             try:
@@ -1075,7 +1096,7 @@ def launch_ui(server_name: str = "0.0.0.0", server_port: int = 7860):
             outputs=[chatbot, msg],
         ).then(
             fn=get_bot_response,
-            inputs=[chatbot, top_k, history_toggle, language_selector],
+            inputs=[chatbot, top_k, history_toggle, language_selector, rag_type],
             outputs=[chatbot, token_stats],
         )
 
@@ -1085,7 +1106,7 @@ def launch_ui(server_name: str = "0.0.0.0", server_port: int = 7860):
             outputs=[chatbot, msg],
         ).then(
             fn=get_bot_response,
-            inputs=[chatbot, top_k, history_toggle, language_selector],
+            inputs=[chatbot, top_k, history_toggle, language_selector, rag_type],
             outputs=[chatbot, token_stats],
         )
 
@@ -1131,8 +1152,8 @@ def launch_ui(server_name: str = "0.0.0.0", server_port: int = 7860):
                 ui.get_status_html(),
                 gr.update(visible=has_data),  # examples col: show if data
                 data_msg,
-                gr.update(visible=False),   # hide loading overlay
-                gr.update(open=False),      # data accordion: start collapsed
+                gr.update(visible=False),  # hide loading overlay
+                gr.update(open=False),  # data accordion: start collapsed
             )
 
         demo.load(

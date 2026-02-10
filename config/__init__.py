@@ -32,6 +32,9 @@ class RAGConfig(BaseSettings):
     top_k: int = Field(default=5, alias="TOP_K")
     use_reranker: bool = Field(default=False, alias="USE_RERANKER")
 
+    # RAG type
+    rag_type: Literal["basic", "knowledge_graph"] = Field(default="basic", alias="RAG_TYPE")
+
     # LLM
     llm_provider: Literal["ollama", "openrouter"] = Field(default="ollama", alias="LLM_PROVIDER")
     llm_model: str = Field(default="llama3.1:8b", alias="LLM_MODEL")
