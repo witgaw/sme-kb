@@ -153,7 +153,7 @@ class RAGInterface:
             else:
                 # First initialization - loads embedding model (slow first time)
                 self.rag = RAGPipeline(llm_provider=provider.lower(), llm_model=actual_model)
-            return self.get_status()
+            return self.get_status_html()
         except Exception as e:
             return f"[X] {type(e).__name__}: {e}"
 
@@ -939,7 +939,9 @@ def launch_ui(server_name: str = "0.0.0.0", server_port: int = 7860):
             default_model = ollama_models[0][1] if ollama_models else ""
 
             # Initialize model
-            ui.initialize("Ollama", default_model, "")
+            init_result = ui.initialize("Ollama", default_model, "")
+            if init_result.startswith("[X]"):
+                print(f"[warn] Auto-init failed: {init_result[4:]}")
 
             # Load demo data if no data exists
             try:
