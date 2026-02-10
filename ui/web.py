@@ -229,11 +229,11 @@ class RAGInterface:
         return "\n".join(parts)
 
     def _format_sources_html(self, sources: list[dict] | None = None) -> str:
-        """Format sources as collapsible HTML details elements."""
+        """Format sources grouped by document with collapsible chunk text."""
         if not sources:
-            return "<p><em>No sources</em></p>"
+            return "<p style='color:var(--body-text-color);opacity:0.5;'>No sources</p>"
 
-        # Group chunks by document
+        # Group chunks by document, preserving order
         docs: dict[str, list[dict]] = {}
         for chunk in sources:
             source = chunk.get("source", "unknown")
@@ -241,47 +241,66 @@ class RAGInterface:
                 docs[source] = []
             docs[source].append(chunk)
 
-        html_parts = []
+        out = ["<div style='display:flex;flex-direction:column;gap:0.75rem;'>"]
+
         for source, chunks in docs.items():
             ext = Path(source).suffix.lower()
             icon = FILE_ICONS.get(ext, "[FILE]")
-            name = Path(source).name
+            name = html_lib.escape(Path(source).name)
 
+            out.append("<div>")
+            # Document header
+            out.append(
+                f"<div style='font-weight:600;font-size:0.875rem;"
+                f"padding:0.25rem 0;margin-bottom:0.35rem;"
+                f"border-bottom:1px solid var(--border-color-primary,#e5e7eb);'>"
+                f"{icon} {name}</div>"
+            )
+
+            # Chunks
             for i, chunk in enumerate(chunks, 1):
                 content = chunk.get("content", "")
-                preview = content.replace("\n", " ")[:120]
-                if len(content) > 120:
-                    preview += "..."
+                preview = content.replace("\n", " ")[:100]
+                if len(content) > 100:
+                    preview += "…"
 
                 meta_parts = []
                 if "distance" in chunk:
-                    meta_parts.append(f"dist: {chunk['distance']:.3f}")
+                    meta_parts.append(f"dist {chunk['distance']:.3f}")
                 if "rerank_score" in chunk:
-                    meta_parts.append(f"rerank: {chunk['rerank_score']:.3f}")
-                meta_str = f" <small>({', '.join(meta_parts)})</small>" if meta_parts else ""
+                    meta_parts.append(f"rerank {chunk['rerank_score']:.3f}")
+                meta_str = (
+                    f"<span style='opacity:0.5;margin-left:0.5rem;font-size:0.75rem;'>"
+                    f"({', '.join(meta_parts)})</span>"
+                    if meta_parts
+                    else ""
+                )
 
                 escaped_content = html_lib.escape(content)
                 escaped_preview = html_lib.escape(preview)
-                escaped_name = html_lib.escape(name)
 
-                html_parts.append(
-                    f'<details style="margin-bottom:0.4rem;border:1px solid #e5e7eb;'
-                    f'border-radius:6px;overflow:hidden;">'
-                    f'<summary style="cursor:pointer;padding:0.5rem 0.75rem;'
-                    f'background:#f9fafb;font-family:monospace;font-size:0.875rem;'
-                    f'list-style:none;display:flex;justify-content:space-between;'
-                    f'align-items:flex-start;gap:0.5rem;">'
-                    f'<span><strong>{icon} {escaped_name}</strong> #{i}{meta_str}</span>'
-                    f'<span style="color:#6b7280;font-weight:normal;flex-shrink:0;">'
-                    f'{escaped_preview}</span>'
+                out.append(
+                    f"<details style='margin-bottom:0.2rem;'>"
+                    f"<summary style='cursor:pointer;font-size:0.8rem;padding:0.2rem 0;"
+                    f"list-style:none;display:flex;gap:0.4rem;align-items:baseline;"
+                    f"opacity:0.85;'>"
+                    f"<span style='flex-shrink:0;opacity:0.5;'>#{i}</span>"
+                    f"{meta_str}"
+                    f"<span style='overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'>"
+                    f"{escaped_preview}</span>"
                     f"</summary>"
-                    f'<pre style="margin:0;padding:0.75rem;white-space:pre-wrap;'
-                    f'font-size:0.825rem;background:#fff;border-top:1px solid #e5e7eb;">'
+                    f"<pre style='margin:0.3rem 0 0.3rem 1rem;padding:0.5rem 0.75rem;"
+                    f"font-size:0.8rem;white-space:pre-wrap;border-radius:4px;"
+                    f"background:var(--background-fill-secondary,#f9fafb);"
+                    f"border:1px solid var(--border-color-primary,#e5e7eb);'>"
                     f"{escaped_content}</pre>"
                     f"</details>"
                 )
 
-        return "\n".join(html_parts)
+            out.append("</div>")
+
+        out.append("</div>")
+        return "\n".join(out)
 
     def load_demo(self, progress=gr.Progress()) -> str:
         """Load demo data."""
