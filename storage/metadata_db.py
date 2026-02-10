@@ -210,6 +210,19 @@ class MetadataDB:
             cursor.execute("DELETE FROM chunks WHERE document_id = ?", (document_id,))
             cursor.execute("DELETE FROM documents WHERE id = ?", (document_id,))
 
+    def get_empty_documents(self) -> list[dict[str, Any]]:
+        """Return documents that have no chunks (unreadable content, e.g. image-only PDFs)."""
+        with self._transaction() as cursor:
+            cursor.execute("""
+                SELECT d.id, d.filepath, d.file_type
+                FROM documents d
+                LEFT JOIN chunks c ON c.document_id = d.id
+                GROUP BY d.id
+                HAVING COUNT(c.id) = 0
+                ORDER BY d.filepath
+            """)
+            return [dict(row) for row in cursor.fetchall()]
+
     def clear_all(self) -> None:
         """Clear all data from database (useful for testing)."""
         with self._transaction() as cursor:

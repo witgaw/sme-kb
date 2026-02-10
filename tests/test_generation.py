@@ -115,10 +115,14 @@ class TestLLMClient:
 
     def test_generate_ollama(self, test_config, mock_llm_client):
         """Test generation with Ollama (mocked)."""
-        from generation.llm_client import LLMClient
+        from generation.llm_client import LLMClient, LLMUsage
 
         client = LLMClient(provider="ollama", model="llama3.1:8b")
-        response = client.generate("Test prompt")
+        response, usage = client.generate("Test prompt")
 
         assert response == "Test response from LLM"
+        assert isinstance(usage, LLMUsage)
+        assert usage.prompt_tokens == 100
+        assert usage.completion_tokens == 50
+        assert usage.total_tokens == 150
         mock_llm_client.post.assert_called_once()

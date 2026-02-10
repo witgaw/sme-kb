@@ -53,11 +53,38 @@ class RAGPipeline:
         )
         self._graph = build_rag_graph(self._components)
 
+    def set_llm_model(self, provider: str | None = None, model: str | None = None) -> None:
+        """Change LLM model without reinitializing the entire pipeline.
+
+        Args:
+            provider: 'ollama' or 'openrouter'. Uses current if None.
+            model: Model name. Uses current if None.
+        """
+        provider = provider or self.llm_provider
+        model = model or self.llm_model
+
+        # Close old client
+        self._llm_client.close()
+
+        # Create new client
+        self._llm_client = LLMClient(provider=provider, model=model)
+
+        # Update stored values
+        self.llm_provider = provider
+        self.llm_model = model
+
+        # Update components and rebuild graph
+        self._components.llm_client = self._llm_client
+        self._graph = build_rag_graph(self._components)
+
     def query(
         self,
         question: str,
         top_k: int | None = None,
         return_sources: bool = True,
+        return_details: bool = True,
+        conversation_history: list[dict[str, str]] | None = None,
+        language: str = "pl",
     ) -> dict[str, Any]:
         """Execute RAG query.
 
@@ -65,9 +92,13 @@ class RAGPipeline:
             question: User's question.
             top_k: Number of chunks to retrieve. Uses config if None.
             return_sources: Whether to include sources in response.
+            return_details: Whether to include prompt, context, and usage in response.
+            conversation_history: Optional conversation history for multi-turn chat.
+                List of dicts with 'role' and 'content' keys.
+            language: Response language ('pl' or 'en'). Defaults to 'pl'.
 
         Returns:
-            Dict with 'answer' and optionally 'sources' and 'chunks'.
+            Dict with 'answer' and optionally 'sources', 'chunks', 'prompt', 'context', 'usage'.
         """
         config = get_config()
         top_k = top_k or config.top_k
@@ -81,7 +112,14 @@ class RAGPipeline:
             "context": "",
             "response": "",
             "sources": [],
+            "prompt": "",
+            "usage": {},
+            "language": language,
         }
+
+        # Add conversation history if provided
+        if conversation_history:
+            initial_state["conversation_history"] = conversation_history
 
         # Run through LangGraph
         final_state = self._graph.invoke(initial_state)
@@ -91,6 +129,11 @@ class RAGPipeline:
         if return_sources:
             result["sources"] = final_state["sources"]
             result["chunks"] = final_state["reranked_chunks"]
+
+        if return_details:
+            result["prompt"] = final_state["prompt"]
+            result["context"] = final_state["context"]
+            result["usage"] = final_state["usage"]
 
         return result
 

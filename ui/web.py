@@ -3,6 +3,7 @@
 import json
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import gradio as gr
 import httpx
@@ -57,7 +58,9 @@ class RAGInterface:
 
     def __init__(self):
         self.rag = None
-        self.last_sources: list[dict] = []
+        self.conversation_history: list[dict[str, str]] = []
+        self.history_enabled: bool = False
+        self.message_metadata: list[dict[str, Any]] = []
 
     def get_ollama_models(self) -> list[tuple[str, str]]:
         """Get list of installed Ollama models."""
@@ -142,11 +145,14 @@ class RAGInterface:
             if not key:
                 return "[X] OPENROUTER_API_KEY not set"
 
-        # Initialize (this loads embedding model - can be slow first time)
+        # Initialize or update model
         try:
             if self.rag:
-                self.rag.close()
-            self.rag = RAGPipeline(llm_provider=provider.lower(), llm_model=actual_model)
+                # Pipeline already exists - just change the LLM model (fast!)
+                self.rag.set_llm_model(provider=provider.lower(), model=actual_model)
+            else:
+                # First initialization - loads embedding model (slow first time)
+                self.rag = RAGPipeline(llm_provider=provider.lower(), llm_model=actual_model)
             return self.get_status()
         except Exception as e:
             return f"[X] {type(e).__name__}: {e}"
@@ -178,26 +184,90 @@ class RAGInterface:
             self.last_sources = []
             return history, "*No sources*"
 
-    def _format_sources(self) -> str:
-        if not self.last_sources:
+    def _format_prompt_details(self, prompt: str = "", usage: dict[str, int] | None = None) -> str:
+        """Format prompt and usage details."""
+        if not prompt and not usage:
+            return "*No details available*"
+
+        parts = []
+
+        # Add token usage if available
+        if usage:
+            prompt_tokens = usage.get("prompt_tokens", 0)
+            completion_tokens = usage.get("completion_tokens", 0)
+            total_tokens = usage.get("total_tokens", 0)
+
+            parts.append("### Token Usage")
+            parts.append("")
+            parts.append(f"- **Input tokens:** {prompt_tokens:,}")
+            parts.append(f"- **Output tokens:** {completion_tokens:,}")
+            parts.append(f"- **Total tokens:** {total_tokens:,}")
+            parts.append("")
+
+        # Add full prompt if available
+        if prompt:
+            parts.append("### Full Prompt")
+            parts.append("")
+            parts.append("```")
+            parts.append(prompt)
+            parts.append("```")
+            parts.append("")
+
+        return "\n".join(parts)
+
+    def _format_sources(self, sources: list[dict] | None = None, show_full: bool = True) -> str:
+        """Format sources display with full chunk content and metadata.
+
+        Args:
+            sources: List of source chunks.
+            show_full: If True, show full chunk content. If False, show preview only.
+        """
+        if not sources:
             return "*No sources*"
+
+        # Group chunks by document
         docs = {}
-        for chunk in self.last_sources:
+        for chunk in sources:
             source = chunk.get("source", "unknown")
             if source not in docs:
                 docs[source] = []
-            docs[source].append(chunk.get("content", "")[:200])
+            docs[source].append(chunk)
 
         parts = []
         for source, chunks in docs.items():
             ext = Path(source).suffix.lower()
             icon = FILE_ICONS.get(ext, "[FILE]")
             name = Path(source).name
-            parts.append(f"**{icon} {name}**")
-            for i, chunk in enumerate(chunks, 1):
-                preview = chunk.replace("\n", " ")[:100]
-                parts.append(f"_{i}. {preview}..._")
+            parts.append(f"### {icon} {name}")
             parts.append("")
+
+            for i, chunk in enumerate(chunks, 1):
+                content = chunk.get("content", "")
+
+                # Show metadata if available
+                metadata_parts = []
+                if "distance" in chunk:
+                    metadata_parts.append(f"Distance: {chunk['distance']:.3f}")
+                if "rerank_score" in chunk:
+                    metadata_parts.append(f"Rerank: {chunk['rerank_score']:.3f}")
+
+                if metadata_parts:
+                    parts.append(f"**Chunk {i}** ({', '.join(metadata_parts)})")
+                else:
+                    parts.append(f"**Chunk {i}**")
+
+                if show_full:
+                    # Show full content in code block for readability
+                    parts.append("```")
+                    parts.append(content)
+                    parts.append("```")
+                else:
+                    # Show preview only
+                    preview = content.replace("\n", " ")[:200]
+                    parts.append(f"_{preview}..._")
+
+                parts.append("")
+
         return "\n".join(parts)
 
     def load_demo(self, progress=gr.Progress()) -> str:
@@ -207,6 +277,8 @@ class RAGInterface:
                 generate_docx,
                 generate_eml,
                 generate_md,
+                generate_pdf_easy,
+                generate_pdf_hard,
                 generate_pptx,
                 generate_xlsx,
             )
@@ -237,7 +309,14 @@ class RAGInterface:
                 docs = data.get("documents", [])
                 for i, doc in enumerate(docs):
                     fmt = doc.get("format", "")
-                    if fmt in gens:
+                    if fmt == "pdf":
+                        difficulty = doc.get("pdf_difficulty", "easy")
+                        gen_fn = generate_pdf_hard if difficulty == "hard" else generate_pdf_easy
+                        try:
+                            gen_fn(doc, out)
+                        except Exception:
+                            pass
+                    elif fmt in gens:
                         try:
                             gens[fmt](doc, out)
                         except Exception:
@@ -250,6 +329,7 @@ class RAGInterface:
                 stats = ing.ingest_directory(out, recursive=True)
                 progress(1.0)
 
+                _log_ingestion_stats(stats, source="demo dataset")
                 if stats["ingested"] == 0 and stats["skipped_duplicate"] > 0:
                     return f"Already loaded ({stats['skipped_duplicate']} docs)"
                 return f"Loaded {stats['ingested']} docs"
@@ -268,6 +348,7 @@ class RAGInterface:
             ing = DocumentIngester()
             stats = ing.ingest_directory(p, recursive=True)
             progress(1.0)
+            _log_ingestion_stats(stats, source=str(p))
             if stats["ingested"] == 0 and stats["skipped_duplicate"] > 0:
                 return f"Already loaded ({stats['skipped_duplicate']} docs)"
             return f"Loaded {stats['ingested']} docs"
@@ -288,6 +369,17 @@ class RAGInterface:
             return "All data cleared"
         except Exception as e:
             return f"[X] {type(e).__name__}: {e}"
+
+    def clear_conversation_history(self) -> None:
+        """Clear conversation history and message metadata."""
+        self.conversation_history = []
+        self.message_metadata = []
+
+    def toggle_history_mode(self, enabled: bool) -> None:
+        """Toggle conversation history mode."""
+        self.history_enabled = enabled
+        if not enabled:
+            self.clear_conversation_history()
 
     def examples(self) -> list[str]:
         try:
@@ -362,6 +454,45 @@ CSS = """
 """
 
 
+def _log_ingestion_stats(stats: dict, source: str = "") -> None:
+    """Print ingestion results to the terminal."""
+    label = f" from {source}" if source else ""
+    total = stats["total_files"]
+    ingested = stats["ingested"]
+    dupes = stats["skipped_duplicate"]
+    failed = stats["failed"]
+    errors = stats.get("errors", [])
+
+    print(
+        f"[kb] ingested{label}: {ingested}/{total} new"
+        + (f", {dupes} duplicate(s) skipped" if dupes else "")
+        + (f", {failed} failed" if failed else "")
+    )
+
+    for err in errors:
+        name = Path(err["file"]).name
+        print(f"  [fail] {name}: {err['error']}")
+
+
+def _log_startup_diagnostics() -> None:
+    """Print a summary of what is currently indexed, including unreadable documents."""
+    try:
+        mdb = MetadataDB()
+        doc_count = mdb.get_document_count()
+        chunk_count = mdb.get_chunk_count()
+        empty_docs = mdb.get_empty_documents()
+    except Exception as e:
+        print(f"[warn] Could not read metadata DB: {e}")
+        return
+
+    print(f"[kb] {doc_count} documents indexed, {chunk_count} chunks")
+    if empty_docs:
+        n = len(empty_docs)
+        print(f"[warn] {n} document(s) with no extractable text (not searchable):")
+        for doc in empty_docs:
+            print(f"  - {Path(doc['filepath']).name}  ({doc['file_type']})")
+
+
 def launch_ui(server_name: str = "0.0.0.0", server_port: int = 7860):
     """Launch chat interface."""
     ui = RAGInterface()
@@ -420,9 +551,6 @@ def launch_ui(server_name: str = "0.0.0.0", server_port: int = 7860):
                     """
                 )
 
-                with gr.Accordion("Sources", open=False):
-                    sources = gr.Markdown("*Ask a question to see sources*")
-
                 with gr.Accordion("Settings", open=True):
                     provider = gr.Radio(
                         ["Ollama", "OpenRouter"],
@@ -445,6 +573,19 @@ def launch_ui(server_name: str = "0.0.0.0", server_port: int = 7860):
                     gr.Markdown("---")
                     top_k = gr.Slider(1, 50, 10, step=1, label="Retrieval chunks")
 
+                    history_toggle = gr.Checkbox(
+                        label="Enable conversation history",
+                        value=False,
+                        info="LLM remembers previous messages. Uses more tokens.",
+                    )
+
+                    language_selector = gr.Radio(
+                        choices=[("Polski", "pl"), ("English", "en")],
+                        value="pl",
+                        label="Response language",
+                        info="Language for LLM responses",
+                    )
+
                 def update_model_choices(p):
                     if p == "Ollama":
                         choices = ui.get_ollama_models()
@@ -463,6 +604,10 @@ def launch_ui(server_name: str = "0.0.0.0", server_port: int = 7860):
                     fn=lambda m: gr.update(visible=(m == "custom")),
                     inputs=model,
                     outputs=custom,
+                )
+                history_toggle.change(
+                    fn=ui.toggle_history_mode,
+                    inputs=history_toggle,
                 )
 
                 with gr.Accordion("Data", open=False):
@@ -488,6 +633,17 @@ def launch_ui(server_name: str = "0.0.0.0", server_port: int = 7860):
                             btn.click(fn=lambda e=ex: e, outputs=msg)
                             example_btns.append(btn)
 
+        # Message Details Section (full-width below chat)
+        with gr.Accordion("Message Details", open=False):
+            selected_message_label = gr.Markdown("*Click on an assistant message to view details*")
+
+            with gr.Tabs():
+                with gr.Tab("Sources"):
+                    sources = gr.Markdown("*Click on a message to see sources*")
+
+                with gr.Tab("Prompt & Usage"):
+                    prompt_details = gr.Markdown("*Click on a message to see prompt details*")
+
         # Initialize handler
         def do_init(prov, mod, cust):
             result = ui.initialize(prov, mod, cust)
@@ -502,13 +658,15 @@ def launch_ui(server_name: str = "0.0.0.0", server_port: int = 7860):
             return ui.get_status_html()
 
         init_btn.click(
-            fn=lambda: """
+            fn=lambda: (
+                """
             <div style="background: #f59e0b; border: 2px solid #d97706; color: white;
                         padding: 1rem 1.25rem; border-radius: 8px; font-family: monospace;
                         margin-bottom: 1rem; font-size: 0.95rem;">
                 <div><strong>Status:</strong> Initializing...</div>
             </div>
-            """,
+            """
+            ),
             outputs=status,
         ).then(
             fn=do_init,
@@ -554,6 +712,62 @@ def launch_ui(server_name: str = "0.0.0.0", server_port: int = 7860):
             outputs=[data_status, status, examples_acc],
         )
 
+        # Message details handlers
+        def show_message_details(evt: gr.SelectData):
+            """Display details for the clicked message."""
+            if not ui.message_metadata:
+                return (
+                    "*No message data available*",
+                    "*No sources*",
+                    "*No details*",
+                )
+
+            # evt.index is the index in the chatbot history
+            # Chat history alternates: user (even), assistant (odd)
+            # Only show details for assistant messages (odd indices)
+            if evt.index % 2 == 0:
+                # User message clicked - ignore
+                return (
+                    "*Click on an assistant response (not your question) to view details*",
+                    "*No sources*",
+                    "*No details*",
+                )
+
+            # Assistant message clicked
+            metadata_idx = (evt.index - 1) // 2
+
+            # Check if metadata exists for this index
+            if metadata_idx < 0 or metadata_idx >= len(ui.message_metadata):
+                return (
+                    "*No details available for this message*",
+                    "*No sources*",
+                    "*No details*",
+                )
+
+            meta = ui.message_metadata[metadata_idx]
+
+            # Build header showing question and answer preview
+            question = meta["query"]
+            answer = meta["answer"]
+            question_preview = question[:80] + "..." if len(question) > 80 else question
+            answer_preview = answer[:80] + "..." if len(answer) > 80 else answer
+
+            message_label = f"""**Response #{metadata_idx + 1}**
+
+**Q:** {question_preview}
+
+**A:** {answer_preview}"""
+
+            sources_text = ui._format_sources(meta["sources"])
+            details_text = ui._format_prompt_details(meta["prompt"], meta["usage"])
+
+            return message_label, sources_text, details_text
+
+        chatbot.select(
+            fn=show_message_details,
+            outputs=[selected_message_label, sources, prompt_details],
+        )
+
         # Chat handlers
         def add_user_message(message, history):
             """Add user message immediately and clear input."""
@@ -564,10 +778,10 @@ def launch_ui(server_name: str = "0.0.0.0", server_port: int = 7860):
             history.append({"role": "user", "content": message})
             return history, ""
 
-        def get_bot_response(history, k):
+        def get_bot_response(history, k, history_enabled, language):
             """Get bot response for the last user message."""
             if not history or len(history) == 0:
-                return history, "*No sources*"
+                return history
 
             if not ui.rag:
                 history.append(
@@ -576,7 +790,7 @@ def launch_ui(server_name: str = "0.0.0.0", server_port: int = 7860):
                         "content": "System not initialized. Click 'Initialize' in Settings.",
                     }
                 )
-                return history, "*No sources*"
+                return history
 
             try:
                 # Get the last message - must be from user
@@ -594,19 +808,49 @@ def launch_ui(server_name: str = "0.0.0.0", server_port: int = 7860):
                 # Validate message
                 if not user_msg or not user_msg.strip():
                     history.append({"role": "assistant", "content": "Please enter a question."})
-                    return history, "*No sources*"
+                    return history
 
-                result = ui.rag.query(user_msg.strip(), top_k=k, return_sources=True)
-                ui.last_sources = result.get("chunks", [])
-                history.append({"role": "assistant", "content": result["answer"]})
-                return history, ui._format_sources()
+                # Determine what to send to pipeline
+                conv_history = ui.conversation_history if history_enabled else None
+
+                # Query with full details and optional conversation history
+                result = ui.rag.query(
+                    user_msg.strip(),
+                    top_k=k,
+                    return_sources=True,
+                    return_details=True,
+                    conversation_history=conv_history,
+                    language=language,
+                )
+
+                # Get answer without token count
+                answer = result["answer"]
+
+                # Store metadata for this message
+                metadata = {
+                    "sources": result.get("chunks", []),
+                    "prompt": result.get("prompt", ""),
+                    "usage": result.get("usage", {}),
+                    "query": user_msg.strip(),
+                    "answer": answer,
+                }
+                ui.message_metadata.append(metadata)
+
+                # Update conversation history if enabled
+                if history_enabled:
+                    ui.conversation_history.append({"role": "user", "content": user_msg.strip()})
+                    ui.conversation_history.append({"role": "assistant", "content": answer})
+
+                # Add response to chat (without token count)
+                history.append({"role": "assistant", "content": answer})
+
+                return history
             except Exception as e:
                 import traceback
 
                 error_msg = f"Error: {e}\n{traceback.format_exc()}"
                 history.append({"role": "assistant", "content": error_msg})
-                ui.last_sources = []
-                return history, "*No sources*"
+                return history
 
         # Disable send button and show loading in textbox while processing
         send.click(
@@ -615,8 +859,8 @@ def launch_ui(server_name: str = "0.0.0.0", server_port: int = 7860):
             outputs=[chatbot, msg],
         ).then(
             fn=get_bot_response,
-            inputs=[chatbot, top_k],
-            outputs=[chatbot, sources],
+            inputs=[chatbot, top_k, history_toggle, language_selector],
+            outputs=[chatbot],
         )
 
         msg.submit(
@@ -625,11 +869,15 @@ def launch_ui(server_name: str = "0.0.0.0", server_port: int = 7860):
             outputs=[chatbot, msg],
         ).then(
             fn=get_bot_response,
-            inputs=[chatbot, top_k],
-            outputs=[chatbot, sources],
+            inputs=[chatbot, top_k, history_toggle, language_selector],
+            outputs=[chatbot],
         )
 
-        clear.click(fn=lambda: ([], ""), outputs=[chatbot, msg])
+        def clear_chat_and_history():
+            ui.clear_conversation_history()
+            return [], ""
+
+        clear.click(fn=clear_chat_and_history, outputs=[chatbot, msg])
 
         # Auto-initialize on page load
         def auto_init():
@@ -654,6 +902,8 @@ def launch_ui(server_name: str = "0.0.0.0", server_port: int = 7860):
                 has_data = not data_msg.startswith("[X]") and (
                     "Loaded" in data_msg or "Already loaded" in data_msg
                 )
+
+            _log_startup_diagnostics()
 
             # Return status HTML, examples visibility, data message, hide loading overlay
             return (

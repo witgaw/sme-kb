@@ -1,12 +1,16 @@
 """LangGraph workflow definition for RAG pipeline."""
 
-from typing import Any, TypedDict
+from typing import Any, NotRequired, TypedDict
 
 from langgraph.graph import END, StateGraph
 
 from config import get_config
 from generation.llm_client import LLMClient
-from generation.prompt_builder import build_rag_prompt, format_context
+from generation.prompt_builder import (
+    build_rag_prompt,
+    build_rag_prompt_with_history,
+    format_context,
+)
 from ingestion.embedder import Embedder
 from retrieval.reranker import NoOpReranker, Reranker
 from retrieval.retriever import Retriever
@@ -24,6 +28,10 @@ class RAGState(TypedDict):
     context: str
     response: str
     sources: list[str]
+    prompt: str
+    usage: dict[str, int]
+    conversation_history: NotRequired[list[dict[str, str]]]
+    language: str
 
 
 class RAGComponents:
@@ -126,11 +134,34 @@ def create_generate_node(components: RAGComponents):
         # Format context
         context = format_context(state["reranked_chunks"], include_source=True)
 
-        # Build prompt
-        prompt = build_rag_prompt(state["query"], context)
+        # Get language preference
+        language = state.get("language", "pl")
 
-        # Generate response
-        response = components.llm_client.generate(prompt)
+        # Check if conversation history is present
+        conversation_history = state.get("conversation_history")
+
+        if conversation_history:
+            # Use history-aware prompting
+            messages = build_rag_prompt_with_history(
+                query=state["query"],
+                context=context,
+                conversation_history=conversation_history,
+                language=language,
+            )
+            response, usage_obj = components.llm_client.generate_with_history(messages)
+            # For prompt details, store the full message array as a formatted string
+            prompt = "\n\n".join(f"{msg['role'].upper()}: {msg['content']}" for msg in messages)
+        else:
+            # Use single-turn prompting (existing behavior)
+            prompt = build_rag_prompt(state["query"], context, language=language)
+            response, usage_obj = components.llm_client.generate(prompt)
+
+        # Convert usage to dict
+        usage = {
+            "prompt_tokens": usage_obj.prompt_tokens,
+            "completion_tokens": usage_obj.completion_tokens,
+            "total_tokens": usage_obj.total_tokens,
+        }
 
         # Extract sources
         sources = [chunk["source"] for chunk in state["reranked_chunks"]]
@@ -139,6 +170,8 @@ def create_generate_node(components: RAGComponents):
             "context": context,
             "response": response,
             "sources": sources,
+            "prompt": prompt,
+            "usage": usage,
         }
 
     return generate_node

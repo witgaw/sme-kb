@@ -1,5 +1,6 @@
 """Command-line interface for RAG system."""
 
+import importlib.metadata
 import importlib.resources
 import json
 from pathlib import Path
@@ -320,6 +321,34 @@ def evaluate(
 
     finally:
         rag.close()
+
+
+def help_cmd():
+    """Print all available uv run commands with their descriptions."""
+    try:
+        eps = importlib.metadata.distribution("sme-kb").entry_points
+    except importlib.metadata.PackageNotFoundError:
+        click.echo("Package 'sme-kb' not found. Run: uv pip install -e .", err=True)
+        raise SystemExit(1)
+
+    # Build name -> description by importing the Click object referenced by each entry point
+    rows: list[tuple[str, str]] = []
+    for ep in eps:
+        if ep.group != "console_scripts":
+            continue
+        try:
+            obj = ep.load()
+            desc = getattr(obj, "help", None) or getattr(obj, "__doc__", None) or ""
+            desc = desc.strip().splitlines()[0] if desc.strip() else ""
+        except Exception:
+            desc = ""
+        rows.append((ep.name, desc))
+
+    rows.sort(key=lambda r: r[0])
+    max_name = max(len(r[0]) for r in rows) if rows else 0
+    click.echo("Available commands (uv run <command>):\n")
+    for name, desc in rows:
+        click.echo(f"  {name:<{max_name}}  {desc}")
 
 
 if __name__ == "__main__":

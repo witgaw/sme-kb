@@ -62,10 +62,10 @@ class DocumentLoader:
         return {
             "content": content,
             "metadata": {
-                "from": msg.get("From"),
-                "to": msg.get("To"),
-                "subject": msg.get("Subject"),
-                "date": msg.get("Date"),
+                "from": str(msg.get("From") or ""),
+                "to": str(msg.get("To") or ""),
+                "subject": str(msg.get("Subject") or ""),
+                "date": str(msg.get("Date") or ""),
             },
         }
 
@@ -198,11 +198,12 @@ class DocumentLoader:
             if text.strip():
                 content_parts.append(text)
 
+        page_count = len(doc)
         doc.close()
 
         return {
             "content": "\n\n".join(content_parts),
-            "metadata": {"page_count": len(doc)},
+            "metadata": {"page_count": page_count},
         }
 
     @classmethod

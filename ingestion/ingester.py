@@ -100,8 +100,10 @@ class DocumentIngester:
         content = doc_data["content"]
         metadata = doc_data["metadata"]
 
-        # Check for duplicates
-        content_hash = compute_document_hash(content)
+        # Check for duplicates; use filepath as hash basis for empty content
+        # to avoid false duplicate detection between unreadable documents
+        # (e.g. image-only PDFs all produce the same empty-string hash)
+        content_hash = compute_document_hash(content if content.strip() else str(filepath))
         if is_duplicate(content_hash, self.metadata_db):
             return {
                 "status": "duplicate",
