@@ -45,11 +45,28 @@ def ingest(directory: Path, embedding_mode: str | None, recursive: bool):
         progress_callback=progress_callback,
     )
 
+    unreadable = stats.get("unreadable", 0)
+    unsupported = stats.get("unsupported", 0)
+
     click.echo("\nIngestion complete!")
-    click.echo(f"  Total files: {stats['total_files']}")
+    total_found = stats["total_files"] + unsupported
+    click.echo(f"  Files found: {total_found} ({stats['total_files']} supported)")
     click.echo(f"  Ingested: {stats['ingested']}")
     click.echo(f"  Skipped (duplicate): {stats['skipped_duplicate']}")
+    if unreadable:
+        click.echo(f"  Unreadable (no text): {unreadable}")
+    if unsupported:
+        click.echo(f"  Unsupported type: {unsupported}")
     click.echo(f"  Failed: {stats['failed']}")
+
+    if unreadable:
+        for filepath in stats.get("unreadable_files", []):
+            click.echo(f"    [unreadable] {Path(filepath).name}")
+
+    if unsupported:
+        for filepath in stats.get("unsupported_files", []):
+            p = Path(filepath)
+            click.echo(f"    [unsupported] {p.name} ({p.suffix})")
 
     if stats["errors"]:
         click.echo("\nErrors:")

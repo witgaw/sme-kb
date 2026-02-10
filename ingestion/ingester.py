@@ -56,14 +56,18 @@ class DocumentIngester:
         directory = Path(directory)
         pattern = "**/*" if recursive else "*"
 
-        files = [
-            f for f in directory.glob(pattern) if f.is_file() and DocumentLoader.is_supported(f)
-        ]
+        all_files = [f for f in directory.glob(pattern) if f.is_file()]
+        files = [f for f in all_files if DocumentLoader.is_supported(f)]
+        unsupported = [f for f in all_files if not DocumentLoader.is_supported(f)]
 
         stats = {
             "total_files": len(files),
             "ingested": 0,
             "skipped_duplicate": 0,
+            "unreadable": 0,
+            "unreadable_files": [],
+            "unsupported": len(unsupported),
+            "unsupported_files": [str(f) for f in unsupported],
             "failed": 0,
             "errors": [],
         }
@@ -78,6 +82,9 @@ class DocumentIngester:
                     stats["ingested"] += 1
                 elif result["status"] == "duplicate":
                     stats["skipped_duplicate"] += 1
+                elif result["status"] == "unreadable":
+                    stats["unreadable"] += 1
+                    stats["unreadable_files"].append(result["filepath"])
             except Exception as e:
                 stats["failed"] += 1
                 stats["errors"].append({"file": str(filepath), "error": str(e)})
@@ -111,6 +118,16 @@ class DocumentIngester:
                 "content_hash": content_hash,
             }
 
+        # Chunk document
+        chunks = self.chunker.chunk(content)
+
+        if not chunks:
+            return {
+                "status": "unreadable",
+                "filepath": str(filepath),
+                "chunks": 0,
+            }
+
         # Add to metadata DB
         doc_id = self.metadata_db.add_document(
             filepath=str(filepath),
@@ -118,17 +135,6 @@ class DocumentIngester:
             file_type=filepath.suffix,
             metadata=metadata,
         )
-
-        # Chunk document
-        chunks = self.chunker.chunk(content)
-
-        if not chunks:
-            return {
-                "status": "ingested",
-                "filepath": str(filepath),
-                "document_id": doc_id,
-                "chunks": 0,
-            }
 
         # Store chunks in metadata DB
         chunk_ids = self.metadata_db.add_chunks(doc_id, chunks)

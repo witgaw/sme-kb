@@ -207,3 +207,78 @@ class TestDocumentIngester:
         assert stats["documents"] == 1
         assert stats["chunks"] >= 1
         assert stats["embeddings"] >= 1
+
+    def test_ingest_empty_file_returns_unreadable(self, tmp_db_paths, tmp_path, mock_embedder):
+        """Test that a file with no extractable text returns 'unreadable' status."""
+        from ingestion import DocumentIngester
+
+        empty_file = tmp_path / "empty.txt"
+        empty_file.write_text("   \n\t  ")  # whitespace only — produces 0 chunks
+
+        ingester = DocumentIngester(
+            vector_db_path=tmp_db_paths["vector_db_path"],
+            metadata_db_path=tmp_db_paths["metadata_db_path"],
+        )
+        result = ingester.ingest_file(empty_file)
+
+        assert result["status"] == "unreadable"
+        assert result["chunks"] == 0
+        # Must NOT be stored in the metadata DB
+        assert ingester.metadata_db.get_document_count() == 0
+
+    def test_unreadable_file_not_counted_in_stats(self, tmp_db_paths, tmp_path, mock_embedder):
+        """Unreadable files increment stats['unreadable'] and are excluded from 'ingested'."""
+        from ingestion import DocumentIngester
+
+        empty_file = tmp_path / "empty.txt"
+        empty_file.write_text("   ")
+
+        ingester = DocumentIngester(
+            vector_db_path=tmp_db_paths["vector_db_path"],
+            metadata_db_path=tmp_db_paths["metadata_db_path"],
+        )
+        stats = ingester.ingest_directory(tmp_path)
+
+        assert stats["ingested"] == 0
+        assert stats["unreadable"] == 1
+        assert str(empty_file) in stats["unreadable_files"]
+        assert stats["failed"] == 0
+
+    def test_unsupported_files_tracked_in_stats(self, tmp_db_paths, tmp_path, mock_embedder):
+        """Unsupported file types are counted separately and excluded from total_files."""
+        from ingestion import DocumentIngester
+
+        docs_dir = tmp_path / "docs"
+        docs_dir.mkdir()
+        (docs_dir / "doc.txt").write_text("Some readable content here.")
+        (docs_dir / "schema.db").write_bytes(b"SQLite format 3\x00")
+        (docs_dir / "photo.jpg").write_bytes(b"\xff\xd8\xff")
+
+        ingester = DocumentIngester(
+            vector_db_path=tmp_db_paths["vector_db_path"],
+            metadata_db_path=tmp_db_paths["metadata_db_path"],
+        )
+        stats = ingester.ingest_directory(docs_dir)
+
+        assert stats["total_files"] == 1  # only .txt counted
+        assert stats["ingested"] == 1
+        assert stats["unsupported"] == 2
+        assert any("schema.db" in f for f in stats["unsupported_files"])
+        assert any("photo.jpg" in f for f in stats["unsupported_files"])
+
+    def test_unreadable_file_not_a_duplicate(self, tmp_db_paths, tmp_path, mock_embedder):
+        """Re-ingesting an unreadable file is unreadable again, not duplicate."""
+        from ingestion import DocumentIngester
+
+        empty_file = tmp_path / "empty.txt"
+        empty_file.write_text("   ")
+
+        ingester = DocumentIngester(
+            vector_db_path=tmp_db_paths["vector_db_path"],
+            metadata_db_path=tmp_db_paths["metadata_db_path"],
+        )
+        result1 = ingester.ingest_file(empty_file)
+        result2 = ingester.ingest_file(empty_file)
+
+        assert result1["status"] == "unreadable"
+        assert result2["status"] == "unreadable"

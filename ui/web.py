@@ -283,18 +283,20 @@ class RAGInterface:
                 generate_xlsx,
             )
 
-            paths = [
-                Path("../sme-synth-data-gen/dataset/documents.json"),
-                Path("dataset/documents.json"),
+            dataset_paths = [
+                Path("../sme-synth-data-gen/dataset"),
+                Path("dataset"),
             ]
-            data = None
-            for p in paths:
-                if p.exists():
-                    with open(p, encoding="utf-8") as f:
-                        data = json.load(f)
+            dataset_dir = None
+            for p in dataset_paths:
+                if (p / "documents.json").exists():
+                    dataset_dir = p
                     break
-            if not data:
+            if not dataset_dir:
                 return "[X] documents.json not found"
+
+            with open(dataset_dir / "documents.json", encoding="utf-8") as f:
+                data = json.load(f)
 
             with tempfile.TemporaryDirectory() as tmp:
                 out = Path(tmp)
@@ -324,6 +326,33 @@ class RAGInterface:
                     if i % 10 == 0:
                         progress(0.1 + 0.4 * i / len(docs))
 
+                # Generate database if database.json exists alongside documents.json
+                db_json = dataset_dir / "database.json"
+                if db_json.exists():
+                    try:
+                        import sqlite3
+
+                        from scripts.generate_database import (
+                            create_indexes,
+                            create_schema,
+                            create_views,
+                            insert_data,
+                        )
+
+                        with open(db_json, encoding="utf-8") as f:
+                            db_def = json.load(f)
+                        db_path = out / db_def["meta"]["database_name"]
+                        conn = sqlite3.connect(str(db_path))
+                        try:
+                            create_schema(conn, db_def["schema"])
+                            insert_data(conn, db_def["data"])
+                            create_indexes(conn)
+                            create_views(conn)
+                        finally:
+                            conn.close()
+                    except Exception:
+                        pass  # DB generation is best-effort
+
                 progress(0.5, desc="Ingesting...")
                 ing = DocumentIngester()
                 stats = ing.ingest_directory(out, recursive=True)
@@ -332,7 +361,7 @@ class RAGInterface:
                 _log_ingestion_stats(stats, source="demo dataset")
                 if stats["ingested"] == 0 and stats["skipped_duplicate"] > 0:
                     return f"Already loaded ({stats['skipped_duplicate']} docs)"
-                return f"Loaded {stats['ingested']} docs"
+                return _format_ingest_result(stats)
         except Exception as e:
             return f"[X] {type(e).__name__}: {e}"
 
@@ -351,7 +380,7 @@ class RAGInterface:
             _log_ingestion_stats(stats, source=str(p))
             if stats["ingested"] == 0 and stats["skipped_duplicate"] > 0:
                 return f"Already loaded ({stats['skipped_duplicate']} docs)"
-            return f"Loaded {stats['ingested']} docs"
+            return _format_ingest_result(stats)
         except Exception as e:
             return f"[X] {type(e).__name__}: {e}"
 
@@ -454,20 +483,50 @@ CSS = """
 """
 
 
+def _format_ingest_result(stats: dict) -> str:
+    """Return a short human-readable summary of an ingest run."""
+    ingested = stats["ingested"]
+    total = stats["total_files"]
+    unreadable = stats.get("unreadable", 0)
+    unsupported = stats.get("unsupported", 0)
+    notes = []
+    if unreadable:
+        notes.append(f"{unreadable} unreadable")
+    if unsupported:
+        notes.append(f"{unsupported} unsupported type")
+    msg = f"Loaded {ingested}/{total} docs"
+    if notes:
+        msg += f" ({', '.join(notes)})"
+    return msg
+
+
 def _log_ingestion_stats(stats: dict, source: str = "") -> None:
     """Print ingestion results to the terminal."""
     label = f" from {source}" if source else ""
     total = stats["total_files"]
     ingested = stats["ingested"]
     dupes = stats["skipped_duplicate"]
+    unreadable = stats.get("unreadable", 0)
+    unsupported = stats.get("unsupported", 0)
     failed = stats["failed"]
     errors = stats.get("errors", [])
 
     print(
         f"[kb] ingested{label}: {ingested}/{total} new"
         + (f", {dupes} duplicate(s) skipped" if dupes else "")
+        + (f", {unreadable} unreadable" if unreadable else "")
+        + (f", {unsupported} unsupported type(s)" if unsupported else "")
         + (f", {failed} failed" if failed else "")
     )
+
+    if unreadable:
+        for filepath in stats.get("unreadable_files", []):
+            print(f"  [unreadable] {Path(filepath).name}")
+
+    if unsupported:
+        for filepath in stats.get("unsupported_files", []):
+            p = Path(filepath)
+            print(f"  [unsupported] {p.name} ({p.suffix})")
 
     for err in errors:
         name = Path(err["file"]).name
@@ -475,22 +534,16 @@ def _log_ingestion_stats(stats: dict, source: str = "") -> None:
 
 
 def _log_startup_diagnostics() -> None:
-    """Print a summary of what is currently indexed, including unreadable documents."""
+    """Print a summary of what is currently indexed."""
     try:
         mdb = MetadataDB()
         doc_count = mdb.get_document_count()
         chunk_count = mdb.get_chunk_count()
-        empty_docs = mdb.get_empty_documents()
     except Exception as e:
         print(f"[warn] Could not read metadata DB: {e}")
         return
 
     print(f"[kb] {doc_count} documents indexed, {chunk_count} chunks")
-    if empty_docs:
-        n = len(empty_docs)
-        print(f"[warn] {n} document(s) with no extractable text (not searchable):")
-        for doc in empty_docs:
-            print(f"  - {Path(doc['filepath']).name}  ({doc['file_type']})")
 
 
 def launch_ui(server_name: str = "0.0.0.0", server_port: int = 7860):
