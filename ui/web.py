@@ -1,23 +1,44 @@
 """Gradio web UI for RAG system - Chat interface."""
 
+import hashlib
 import html as html_lib
 import json
+import os
+import shutil
+import sqlite3
+import subprocess
+import traceback
 from pathlib import Path
 from typing import Any
 
 import gradio as gr
 import httpx
+from scripts.generate_database import (
+    create_indexes,
+    create_schema,
+    create_views,
+    insert_data,
+)
+from scripts.generate_files import (
+    generate_docx,
+    generate_eml,
+    generate_md,
+    generate_pdf_easy,
+    generate_pdf_hard,
+    generate_pptx,
+    generate_xlsx,
+)
 
 from config import get_config
 from ingestion import DocumentIngester
 from ingestion.loader import DocumentLoader
+from pipeline.rag_pipeline import RAGPipeline
 from storage.metadata_db import MetadataDB
+from storage.vector_db import VectorStore
 
 
 def _ask_directory() -> str:
     """Open the native macOS folder picker via osascript."""
-    import subprocess
-
     try:
         proc = subprocess.run(
             [
@@ -192,9 +213,6 @@ class RAGInterface:
 
     def initialize(self, provider: str, model: str, custom: str) -> str:
         """Initialize RAG pipeline. Returns status message."""
-        # Import here to avoid slow startup
-        from pipeline.rag_pipeline import RAGPipeline
-
         actual_model = custom.strip() if model == "custom" else model
         if not actual_model:
             return "[X] Model name required"
@@ -207,8 +225,6 @@ class RAGInterface:
             if not ok:
                 return f"[X] {msg}"
         else:
-            import os
-
             key = config.openrouter_api_key or os.getenv("OPENROUTER_API_KEY")
             if not key:
                 return "[X] OPENROUTER_API_KEY not set"
@@ -372,16 +388,6 @@ class RAGInterface:
     def load_demo(self, progress=gr.Progress()) -> str:
         """Load demo data."""
         try:
-            from scripts.generate_files import (
-                generate_docx,
-                generate_eml,
-                generate_md,
-                generate_pdf_easy,
-                generate_pdf_hard,
-                generate_pptx,
-                generate_xlsx,
-            )
-
             dataset_paths = [
                 Path("../sme-synth-data-gen/dataset"),
                 Path("dataset"),
@@ -393,9 +399,6 @@ class RAGInterface:
                     break
             if not dataset_dir:
                 return "[X] documents.json not found"
-
-            import hashlib
-            import shutil
 
             docs_json = dataset_dir / "documents.json"
             with open(docs_json, encoding="utf-8") as f:
@@ -442,15 +445,6 @@ class RAGInterface:
             db_json = dataset_dir / "database.json"
             if db_json.exists():
                 try:
-                    import sqlite3
-
-                    from scripts.generate_database import (
-                        create_indexes,
-                        create_schema,
-                        create_views,
-                        insert_data,
-                    )
-
                     with open(db_json, encoding="utf-8") as f:
                         db_def = json.load(f)
                     db_path = out / db_def["meta"]["database_name"]
@@ -506,8 +500,6 @@ class RAGInterface:
     def clear_all(self) -> str:
         """Clear all data from databases."""
         try:
-            from storage.vector_db import VectorStore
-
             mdb = MetadataDB()
             vdb = VectorStore()
 
@@ -1201,8 +1193,6 @@ def launch_ui(server_name: str = "0.0.0.0", server_port: int = 7860):
                 history.append({"role": "assistant", "content": answer})
                 return history, ui.get_token_stats_md()
             except Exception as e:
-                import traceback
-
                 error_msg = f"Error: {e}\n{traceback.format_exc()}"
                 history.append({"role": "assistant", "content": error_msg})
                 return history, ui.get_token_stats_md()

@@ -3,15 +3,19 @@
 import importlib.metadata
 import importlib.resources
 import json
+import shutil
 from pathlib import Path
 
 import click
+from scripts.evaluate import evaluate as run_eval
+from scripts.evaluate import format_markdown_report
 
 from config import get_config
 from ingestion import DocumentIngester
 from pipeline.rag_pipeline import RAGPipeline
 from storage.metadata_db import MetadataDB
 from storage.vector_db import VectorStore
+from ui.web import launch_ui
 
 
 @click.group()
@@ -164,7 +168,6 @@ def stats():
 @cli.command()
 def serve():
     """Start the web UI."""
-    from ui.web import launch_ui
 
     launch_ui()
 
@@ -175,8 +178,6 @@ def clear(yes: bool):
     """Clear all data from databases."""
     if not yes:
         click.confirm("This will delete all ingested data. Continue?", abort=True)
-
-    import shutil
 
     metadata_db = MetadataDB()
     vector_db = VectorStore()
@@ -255,8 +256,6 @@ def evaluate(
 
     Uses the sme-synth-data-gen evaluation framework.
     """
-    from scripts.evaluate import evaluate as run_eval
-    from scripts.evaluate import format_markdown_report
 
     # Load ground truth
     if ground_truth is None:

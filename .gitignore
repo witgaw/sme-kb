@@ -25,3 +25,4 @@ chroma_db
 .mypy_cache
 demo_docs/
 ocr_texts/
+ui_settings.json
