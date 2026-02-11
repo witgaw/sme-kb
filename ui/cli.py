@@ -176,11 +176,24 @@ def clear(yes: bool):
     if not yes:
         click.confirm("This will delete all ingested data. Continue?", abort=True)
 
+    import shutil
+
     metadata_db = MetadataDB()
     vector_db = VectorStore()
 
     metadata_db.clear_all()
     vector_db.delete_collection()
+
+    config = get_config()
+    demo_docs = Path(config.metadata_db_path).parent / "demo_docs"
+    if demo_docs.exists():
+        shutil.rmtree(demo_docs)
+        click.echo("Cleared demo_docs/")
+
+    ocr_texts = Path(config.metadata_db_path).parent / "ocr_texts"
+    if ocr_texts.exists():
+        shutil.rmtree(ocr_texts)
+        click.echo("Cleared ocr_texts/")
 
     click.echo("All data cleared.")
 

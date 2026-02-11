@@ -23,3 +23,5 @@ chroma_db
 # Linters and formatters
 .ruff_cache
 .mypy_cache
+demo_docs/
+ocr_texts/

@@ -2,7 +2,6 @@
 
 import html as html_lib
 import json
-import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +10,7 @@ import httpx
 
 from config import get_config
 from ingestion import DocumentIngester
+from ingestion.loader import DocumentLoader
 from storage.metadata_db import MetadataDB
 
 
@@ -51,6 +51,8 @@ _SETTINGS_DEFAULTS: dict[str, Any] = {
     "provider": "Ollama",
     "model": "",
     "top_k": 20,
+    "ocr_enabled": False,
+    "ocr_model": "llava:7b",
 }
 
 
@@ -392,73 +394,93 @@ class RAGInterface:
             if not dataset_dir:
                 return "[X] documents.json not found"
 
-            with open(dataset_dir / "documents.json", encoding="utf-8") as f:
-                data = json.load(f)
+            import hashlib
+            import shutil
 
-            with tempfile.TemporaryDirectory() as tmp:
-                out = Path(tmp)
-                progress(0.1, desc="Generating files...")
-                gens = {
-                    "eml": generate_eml,
-                    "docx": generate_docx,
-                    "xlsx": generate_xlsx,
-                    "pptx": generate_pptx,
-                    "md": generate_md,
-                }
-                docs = data.get("documents", [])
-                for i, doc in enumerate(docs):
-                    fmt = doc.get("format", "")
-                    if fmt == "pdf":
-                        difficulty = doc.get("pdf_difficulty", "easy")
-                        gen_fn = generate_pdf_hard if difficulty == "hard" else generate_pdf_easy
-                        try:
-                            gen_fn(doc, out)
-                        except Exception:
-                            pass
-                    elif fmt in gens:
-                        try:
-                            gens[fmt](doc, out)
-                        except Exception:
-                            pass
-                    if i % 10 == 0:
-                        progress(0.1 + 0.4 * i / len(docs))
+            docs_json = dataset_dir / "documents.json"
+            with open(docs_json, encoding="utf-8") as f:
+                raw = f.read()
+            data = json.loads(raw)
+            docs_hash = hashlib.sha256(raw.encode()).hexdigest()
 
-                # Generate database if database.json exists alongside documents.json
-                db_json = dataset_dir / "database.json"
-                if db_json.exists():
+            out = Path(get_config().metadata_db_path).parent / "demo_docs"
+            hash_file = out / ".docs_hash"
+            if out.exists() and hash_file.exists() and hash_file.read_text() == docs_hash:
+                print("[kb] demo_docs up to date, skipping generation")
+            else:
+                if out.exists():
+                    shutil.rmtree(out)
+                out.mkdir(parents=True, exist_ok=True)
+
+            progress(0.1, desc="Generating files...")
+            gens = {
+                "eml": generate_eml,
+                "docx": generate_docx,
+                "xlsx": generate_xlsx,
+                "pptx": generate_pptx,
+                "md": generate_md,
+            }
+            docs = data.get("documents", [])
+            for i, doc in enumerate(docs):
+                fmt = doc.get("format", "")
+                if fmt == "pdf":
+                    difficulty = doc.get("pdf_difficulty", "easy")
+                    gen_fn = generate_pdf_hard if difficulty == "hard" else generate_pdf_easy
                     try:
-                        import sqlite3
-
-                        from scripts.generate_database import (
-                            create_indexes,
-                            create_schema,
-                            create_views,
-                            insert_data,
-                        )
-
-                        with open(db_json, encoding="utf-8") as f:
-                            db_def = json.load(f)
-                        db_path = out / db_def["meta"]["database_name"]
-                        conn = sqlite3.connect(str(db_path))
-                        try:
-                            create_schema(conn, db_def["schema"])
-                            insert_data(conn, db_def["data"])
-                            create_indexes(conn)
-                            create_views(conn)
-                        finally:
-                            conn.close()
+                        gen_fn(doc, out)
                     except Exception:
-                        pass  # DB generation is best-effort
+                        pass
+                elif fmt in gens:
+                    try:
+                        gens[fmt](doc, out)
+                    except Exception:
+                        pass
+                if i % 10 == 0:
+                    progress(0.1 + 0.4 * i / len(docs))
 
-                progress(0.5, desc="Ingesting...")
-                ing = DocumentIngester()
-                stats = ing.ingest_directory(out, recursive=True)
-                progress(1.0)
+            # Generate database if database.json exists alongside documents.json
+            db_json = dataset_dir / "database.json"
+            if db_json.exists():
+                try:
+                    import sqlite3
 
-                _log_ingestion_stats(stats, source="demo dataset")
-                if stats["ingested"] == 0 and stats["skipped_duplicate"] > 0:
-                    return f"Already loaded ({stats['skipped_duplicate']} docs)"
-                return _format_ingest_result(stats)
+                    from scripts.generate_database import (
+                        create_indexes,
+                        create_schema,
+                        create_views,
+                        insert_data,
+                    )
+
+                    with open(db_json, encoding="utf-8") as f:
+                        db_def = json.load(f)
+                    db_path = out / db_def["meta"]["database_name"]
+                    conn = sqlite3.connect(str(db_path))
+                    try:
+                        create_schema(conn, db_def["schema"])
+                        insert_data(conn, db_def["data"])
+                        create_indexes(conn)
+                        create_views(conn)
+                    finally:
+                        conn.close()
+                except Exception:
+                    pass  # DB generation is best-effort
+
+            hash_file.write_text(docs_hash)
+
+            progress(0.5, desc="Ingesting...")
+            # Auto-enable OCR for demo if vision model is available
+            ocr_model = _load_settings().get("ocr_model", "llava:7b")
+            ocr_available, _ = check_ollama(get_config().ollama_base_url, ocr_model)
+            if ocr_available:
+                print(f"[kb] OCR model '{ocr_model}' detected, enabling OCR for demo ingestion")
+            ing = _make_ingester(ocr_override=True if ocr_available else None)
+            stats = ing.ingest_directory(out, recursive=True)
+            progress(1.0)
+
+            _log_ingestion_stats(stats, source="demo dataset")
+            if stats["ingested"] == 0 and stats["skipped_duplicate"] > 0:
+                return f"Already loaded ({stats['skipped_duplicate']} docs)"
+            return _format_ingest_result(stats)
         except Exception as e:
             return f"[X] {type(e).__name__}: {e}"
 
@@ -471,7 +493,7 @@ class RAGInterface:
             return f"[X] Directory not found: {path}"
         try:
             progress(0.1)
-            ing = DocumentIngester()
+            ing = _make_ingester()
             stats = ing.ingest_directory(p, recursive=True)
             progress(1.0)
             _log_ingestion_stats(stats, source=str(p))
@@ -589,6 +611,20 @@ CSS = """
 """
 
 
+def _make_ingester(ocr_override: bool | None = None) -> DocumentIngester:
+    """Create a DocumentIngester with OCR settings from the persisted UI settings.
+
+    Args:
+        ocr_override: If set, force-enable/disable OCR regardless of saved settings.
+    """
+    saved = _load_settings()
+    config = get_config()
+    ocr_enabled = ocr_override if ocr_override is not None else saved.get("ocr_enabled", False)
+    config.ocr_enabled = ocr_enabled
+    config.ocr_model = saved.get("ocr_model", "llava:7b")
+    return DocumentIngester()
+
+
 def _format_ingest_result(stats: dict) -> str:
     """Return a short human-readable summary of an ingest run."""
     ingested = stats["ingested"]
@@ -616,6 +652,7 @@ def _log_ingestion_stats(stats: dict, source: str = "") -> None:
     unsupported = stats.get("unsupported", 0)
     failed = stats["failed"]
     errors = stats.get("errors", [])
+    ocr_files = stats.get("ocr_files", [])
 
     print(
         f"[kb] ingested{label}: {ingested}/{total} new"
@@ -623,7 +660,25 @@ def _log_ingestion_stats(stats: dict, source: str = "") -> None:
         + (f", {unreadable} unreadable" if unreadable else "")
         + (f", {unsupported} unsupported type(s)" if unsupported else "")
         + (f", {failed} failed" if failed else "")
+        + (f", {len(ocr_files)} OCR'd" if ocr_files else "")
     )
+
+    if ocr_files:
+        for f in ocr_files:
+            model = f.get("ocr_model") or "?"
+            pdf_path = Path(f["filepath"])
+            pdf_link = _term_link(pdf_path.resolve().as_uri(), pdf_path.name)
+            text_path = f.get("ocr_text_path")
+            if text_path:
+                text_link = _term_link(Path(text_path).resolve().as_uri(), text_path)
+                path_info = f" -> {text_link}"
+            else:
+                path_info = ""
+            print(f"  [ocr:{model}] {pdf_link}{path_info}")
+
+    if dupes:
+        for filepath in stats.get("duplicate_files", []):
+            print(f"  [duplicate] {Path(filepath).name}")
 
     if unreadable:
         for filepath in stats.get("unreadable_files", []):
@@ -639,6 +694,10 @@ def _log_ingestion_stats(stats: dict, source: str = "") -> None:
         print(f"  [fail] {name}: {err['error']}")
 
 
+def _term_link(url: str, text: str) -> str:
+    return f"\033]8;;{url}\033\\{text}\033]8;;\033\\"
+
+
 def _log_startup_diagnostics() -> None:
     """Print a summary of what is currently indexed."""
     try:
@@ -650,6 +709,44 @@ def _log_startup_diagnostics() -> None:
         return
 
     print(f"[kb] {doc_count} documents indexed, {chunk_count} chunks")
+
+    config = get_config()
+    ocr_dir = Path(config.metadata_db_path).parent / "ocr_texts"
+
+    docs = mdb.get_all_documents()
+    indexed_paths = set()
+    for doc in docs:
+        fp = Path(doc["filepath"])
+        indexed_paths.add(fp.resolve())
+        src_link = _term_link(fp.resolve().as_uri(), str(fp)) if fp.exists() else str(fp)
+        ocr_txt = ocr_dir / (fp.stem + ".txt")
+        if ocr_txt.exists():
+            txt_link = _term_link(ocr_txt.resolve().as_uri(), str(ocr_txt))
+            print(f"  [doc] {src_link} -> {txt_link}")
+        else:
+            print(f"  [doc] {src_link}")
+
+    # Report source files that were not indexed (unreadable, unsupported, failed)
+    demo_dir = Path(config.metadata_db_path).parent / "demo_docs"
+    not_indexed = []
+    if demo_dir.is_dir():
+        for f in sorted(demo_dir.iterdir()):
+            if f.is_file() and not f.name.startswith(".") and f.resolve() not in indexed_paths:
+                not_indexed.append(f)
+    if not_indexed:
+        supported = DocumentLoader.SUPPORTED_EXTENSIONS
+        unsupported = [f for f in not_indexed if f.suffix.lower() not in supported]
+        missing = [f for f in not_indexed if f.suffix.lower() in supported]
+        if unsupported:
+            print(f"[kb] {len(unsupported)} unsupported file(s):")
+            for f in unsupported:
+                link = _term_link(f.resolve().as_uri(), f.name)
+                print(f"  [unsupported] {link} ({f.suffix})")
+        if missing:
+            print(f"[kb] {len(missing)} file(s) not indexed (re-run ingestion):")
+            for f in missing:
+                link = _term_link(f.resolve().as_uri(), f.name)
+                print(f"  [not indexed] {link}")
 
 
 def launch_ui(server_name: str = "0.0.0.0", server_port: int = 7860):
@@ -763,6 +860,19 @@ def launch_ui(server_name: str = "0.0.0.0", server_port: int = 7860):
                         info="Language for LLM responses",
                     )
 
+                    gr.Markdown("---")
+                    gr.Markdown("**OCR (scanned PDFs)**")
+                    ocr_toggle = gr.Checkbox(
+                        label="Enable OCR fallback",
+                        value=saved.get("ocr_enabled", False),
+                        info="Use a vision model to extract text from image-only PDFs.",
+                    )
+                    ocr_model = gr.Textbox(
+                        label="OCR Model",
+                        value=saved.get("ocr_model", "llava:7b"),
+                        info="Ollama vision model for OCR (e.g. llava:7b, moondream)",
+                    )
+
                 def update_model_choices(p):
                     if p == "Ollama":
                         choices = ui.get_ollama_models()
@@ -793,6 +903,14 @@ def launch_ui(server_name: str = "0.0.0.0", server_port: int = 7860):
                 top_k.change(
                     fn=lambda v: _save_settings({"top_k": v}),
                     inputs=top_k,
+                )
+                ocr_toggle.change(
+                    fn=lambda v: _save_settings({"ocr_enabled": v}),
+                    inputs=ocr_toggle,
+                )
+                ocr_model.change(
+                    fn=lambda v: _save_settings({"ocr_model": v}),
+                    inputs=ocr_model,
                 )
 
                 with gr.Accordion("Data", open=False, elem_id="data-accordion") as data_acc:

@@ -1,6 +1,7 @@
 """Multi-format document loader."""
 
 import email
+import logging
 from email.message import Message
 from pathlib import Path
 from typing import Any
@@ -10,11 +11,32 @@ from docx import Document
 from openpyxl import load_workbook
 from pptx import Presentation
 
+from config import get_config
+from ingestion.ocr import ocr_pdf_pages
+
+logger = logging.getLogger(__name__)
+
+# PDFs with fewer average chars per page than this are considered sparse/image-only
+SPARSE_TEXT_THRESHOLD = 20
+
 
 class DocumentLoader:
     """Load documents from various file formats."""
 
     SUPPORTED_EXTENSIONS = {".eml", ".docx", ".xlsx", ".pptx", ".md", ".txt", ".pdf"}
+
+    def __init__(
+        self,
+        ocr_enabled: bool | None = None,
+        ocr_model: str | None = None,
+        ocr_output_dir: Path | None = None,
+    ):
+        config = get_config()
+        self._ocr_enabled = ocr_enabled if ocr_enabled is not None else config.ocr_enabled
+        self._ocr_model = ocr_model or config.ocr_model
+        self._ollama_base_url = config.ollama_base_url
+        self._ocr_output_dir = ocr_output_dir
+        self.ocr_language: str | None = None
 
     def load(self, filepath: Path | str) -> dict[str, Any]:
         """Load document and return content with metadata.
@@ -189,7 +211,12 @@ class DocumentLoader:
         return {"content": content, "metadata": {}}
 
     def _load_pdf(self, filepath: Path) -> dict[str, Any]:
-        """Load PDF using pymupdf for better text extraction."""
+        """Load PDF using pymupdf for better text extraction.
+
+        When OCR is enabled and the PDF has little/no extractable text
+        (avg chars per page < SPARSE_TEXT_THRESHOLD), falls back to
+        Ollama vision model for text extraction.
+        """
         doc = fitz.open(filepath)
         content_parts = []
 
@@ -201,10 +228,56 @@ class DocumentLoader:
         page_count = len(doc)
         doc.close()
 
-        return {
-            "content": "\n\n".join(content_parts),
-            "metadata": {"page_count": page_count},
-        }
+        content = "\n\n".join(content_parts)
+        ocr_used = False
+
+        total_chars = sum(len(part) for part in content_parts)
+        avg_chars_per_page = total_chars / page_count if page_count > 0 else 0
+
+        ocr_text_path: str | None = None
+
+        if avg_chars_per_page < SPARSE_TEXT_THRESHOLD and self._ocr_enabled:
+            cached_path = (
+                self._ocr_output_dir / (filepath.stem + ".txt")
+                if self._ocr_output_dir is not None
+                else None
+            )
+            if cached_path is not None and cached_path.exists():
+                logger.info("OCR cache hit for %s", filepath.name)
+                content = cached_path.read_text(encoding="utf-8")
+                ocr_used = True
+                ocr_text_path = str(cached_path)
+            else:
+                logger.info(
+                    "Sparse text in %s (avg %.0f chars/page), attempting OCR",
+                    filepath.name,
+                    avg_chars_per_page,
+                )
+                try:
+                    ocr_text = ocr_pdf_pages(
+                        filepath,
+                        base_url=self._ollama_base_url,
+                        model=self._ocr_model,
+                        language=self.ocr_language,
+                    )
+                    if ocr_text.strip():
+                        content = ocr_text
+                        ocr_used = True
+                        if self._ocr_output_dir is not None:
+                            self._ocr_output_dir.mkdir(parents=True, exist_ok=True)
+                            out_path = self._ocr_output_dir / (filepath.stem + ".txt")
+                            out_path.write_text(content, encoding="utf-8")
+                            ocr_text_path = str(out_path)
+                except Exception:
+                    logger.exception("OCR failed for %s", filepath.name)
+
+        metadata: dict[str, Any] = {"page_count": page_count, "ocr_used": ocr_used}
+        if ocr_used:
+            metadata["ocr_model"] = self._ocr_model
+            if ocr_text_path is not None:
+                metadata["ocr_text_path"] = ocr_text_path
+
+        return {"content": content, "metadata": metadata}
 
     @classmethod
     def is_supported(cls, filepath: Path | str) -> bool:

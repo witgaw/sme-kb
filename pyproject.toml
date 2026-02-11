@@ -24,6 +24,7 @@ dependencies = [
     "pydantic-settings>=2.1.0",
     "httpx>=0.27.0",
     "sme-synth-data-gen @ git+https://github.com/witgaw/sme-synth-data-gen.git",
+    "langdetect>=1.0.9",
 ]
 
 [project.optional-dependencies]

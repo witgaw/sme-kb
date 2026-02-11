@@ -1,7 +1,11 @@
 """Tests for document ingestion."""
 
+from unittest.mock import patch
+
+import fitz
 import pytest
 
+from config import RAGConfig, set_config
 from ingestion.chunker import DocumentChunker
 from ingestion.deduplicator import compute_document_hash
 from ingestion.loader import DocumentLoader
@@ -282,3 +286,119 @@ class TestDocumentIngester:
 
         assert result1["status"] == "unreadable"
         assert result2["status"] == "unreadable"
+
+
+def _make_image_only_pdf(filepath):
+    """Create a minimal PDF with an image and no extractable text."""
+    doc = fitz.open()
+    page = doc.new_page(width=200, height=200)
+    # Draw a filled rectangle to simulate an image-only page
+    page.draw_rect(fitz.Rect(10, 10, 190, 190), color=(0, 0, 0), fill=(0.5, 0.5, 0.5))
+    doc.save(str(filepath))
+    doc.close()
+
+
+def _make_text_pdf(filepath, text="Hello, this is a text-heavy PDF with plenty of content."):
+    """Create a PDF with real extractable text."""
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((72, 72), text, fontsize=12)
+    doc.save(str(filepath))
+    doc.close()
+
+
+class TestOCRFallback:
+    """Tests for the OCR fallback in _load_pdf."""
+
+    def test_text_pdf_does_not_trigger_ocr(self, tmp_path):
+        """A text PDF should NOT trigger OCR, and ocr_used should be False."""
+        pdf_path = tmp_path / "text.pdf"
+        _make_text_pdf(pdf_path)
+
+        loader = DocumentLoader(ocr_enabled=True, ocr_model="llava:7b")
+        with patch("ingestion.loader.ocr_pdf_pages") as mock_ocr:
+            result = loader.load(pdf_path)
+
+        mock_ocr.assert_not_called()
+        assert result["metadata"]["ocr_used"] is False
+        assert len(result["content"].strip()) > 0
+
+    def test_image_pdf_with_ocr_enabled_calls_ocr(self, tmp_path):
+        """An image-only PDF with ocr_enabled=True should call the OCR path."""
+        pdf_path = tmp_path / "scan.pdf"
+        _make_image_only_pdf(pdf_path)
+
+        loader = DocumentLoader(ocr_enabled=True, ocr_model="llava:7b")
+        with patch("ingestion.loader.ocr_pdf_pages", return_value="OCR extracted text") as mock_ocr:
+            result = loader.load(pdf_path)
+
+        mock_ocr.assert_called_once_with(
+            pdf_path,
+            base_url="http://localhost:11434",
+            model="llava:7b",
+            language=None,
+        )
+        assert result["content"] == "OCR extracted text"
+        assert result["metadata"]["ocr_used"] is True
+
+    def test_image_pdf_with_ocr_disabled_stays_empty(self, tmp_path):
+        """An image-only PDF with ocr_enabled=False should NOT trigger OCR (default behavior)."""
+        pdf_path = tmp_path / "scan.pdf"
+        _make_image_only_pdf(pdf_path)
+
+        loader = DocumentLoader(ocr_enabled=False)
+        with patch("ingestion.loader.ocr_pdf_pages") as mock_ocr:
+            result = loader.load(pdf_path)
+
+        mock_ocr.assert_not_called()
+        assert result["metadata"]["ocr_used"] is False
+        assert result["content"].strip() == ""
+
+    def test_sparse_text_pdf_triggers_ocr(self, tmp_path):
+        """A PDF with very little text per page should still trigger OCR."""
+        pdf_path = tmp_path / "sparse.pdf"
+        # Insert only a few characters — below the threshold
+        _make_text_pdf(pdf_path, text="Hi")
+
+        loader = DocumentLoader(ocr_enabled=True, ocr_model="moondream")
+        with patch(
+            "ingestion.loader.ocr_pdf_pages", return_value="Full OCR output"
+        ) as mock_ocr:
+            result = loader.load(pdf_path)
+
+        mock_ocr.assert_called_once()
+        assert result["metadata"]["ocr_used"] is True
+        assert result["content"] == "Full OCR output"
+
+    def test_ocr_failure_falls_back_to_original_content(self, tmp_path):
+        """If OCR raises an exception, the original (sparse) content is preserved."""
+        pdf_path = tmp_path / "scan.pdf"
+        _make_image_only_pdf(pdf_path)
+
+        loader = DocumentLoader(ocr_enabled=True, ocr_model="llava:7b")
+        with patch(
+            "ingestion.loader.ocr_pdf_pages", side_effect=RuntimeError("Ollama down")
+        ):
+            result = loader.load(pdf_path)
+
+        assert result["metadata"]["ocr_used"] is False
+
+    def test_ocr_returns_empty_keeps_original(self, tmp_path):
+        """If OCR returns empty text, the original content is kept and ocr_used stays False."""
+        pdf_path = tmp_path / "scan.pdf"
+        _make_image_only_pdf(pdf_path)
+
+        loader = DocumentLoader(ocr_enabled=True, ocr_model="llava:7b")
+        with patch("ingestion.loader.ocr_pdf_pages", return_value="   "):
+            result = loader.load(pdf_path)
+
+        assert result["metadata"]["ocr_used"] is False
+
+    def test_default_ocr_disabled_from_config(self, tmp_path):
+        """DocumentLoader with no explicit OCR params defaults to config (disabled)."""
+        config = RAGConfig(OCR_ENABLED=False, OCR_MODEL="test-model")
+        set_config(config)
+
+        loader = DocumentLoader()
+        assert loader._ocr_enabled is False
+        assert loader._ocr_model == "test-model"
