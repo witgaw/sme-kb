@@ -121,7 +121,11 @@ def mock_llm_client():
     with patch("generation.llm_client.httpx.Client") as mock_http:
         mock_client = MagicMock()
         mock_response = MagicMock()
-        mock_response.json.return_value = {"response": "Test response from LLM"}
+        mock_response.json.return_value = {
+            "response": "Test response from LLM",
+            "prompt_eval_count": 100,
+            "eval_count": 50,
+        }
         mock_client.post.return_value = mock_response
         mock_http.return_value = mock_client
         yield mock_client

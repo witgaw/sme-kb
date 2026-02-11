@@ -1093,6 +1093,15 @@ wheels = [
 ]
 
 [[package]]
+name = "langdetect"
+version = "1.0.9"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "six" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/0e/72/a3add0e4eec4eb9e2569554f7c70f4a3c27712f40e3284d483e88094cc0e/langdetect-1.0.9.tar.gz", hash = "sha256:cbc1fef89f8d062739774bd51eda3da3274006b3661d199c2655f6b3f6d605a0", size = 981474, upload-time = "2021-05-07T07:54:13.562Z" }
+
+[[package]]
 name = "langgraph"
 version = "1.0.6"
 source = { registry = "https://pypi.org/simple" }
@@ -2884,6 +2893,19 @@ wheels = [
 ]
 
 [[package]]
+name = "reportlab"
+version = "4.4.9"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "charset-normalizer" },
+    { name = "pillow" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/1a/39/42cf24aee570a80e1903221ae3a92a2e34c324794a392eb036cbb6dc3839/reportlab-4.4.9.tar.gz", hash = "sha256:7cf487764294ee791a4781f5a157bebce262a666ae4bbb87786760a9676c9378", size = 3911246, upload-time = "2026-01-15T10:07:56.08Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/17/77/546e50edfaba6a0e58e8ec5fdc4446510227cec9e8f40172b60941d5a633/reportlab-4.4.9-py3-none-any.whl", hash = "sha256:68e2d103ae8041a37714e8896ec9b79a1c1e911d68c3bd2ea17546568cf17bfd", size = 1954401, upload-time = "2026-01-15T09:27:59.133Z" },
+]
+
+[[package]]
 name = "requests"
 version = "2.32.5"
 source = { registry = "https://pypi.org/simple" }
@@ -3291,14 +3313,17 @@ dependencies = [
     { name = "httpx" },
     { name = "langchain-core" },
     { name = "langchain-text-splitters" },
+    { name = "langdetect" },
     { name = "langgraph" },
     { name = "openai" },
     { name = "openpyxl" },
+    { name = "pillow" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "pymupdf" },
     { name = "python-docx" },
     { name = "python-pptx" },
+    { name = "reportlab" },
     { name = "sentence-transformers" },
     { name = "sme-synth-data-gen" },
 ]
@@ -3320,10 +3345,12 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "langchain-core", specifier = ">=0.3.0" },
     { name = "langchain-text-splitters", specifier = ">=0.3.0" },
+    { name = "langdetect", specifier = ">=1.0.9" },
     { name = "langgraph", specifier = ">=0.2.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.8.0" },
     { name = "openai", specifier = ">=1.10.0" },
     { name = "openpyxl", specifier = ">=3.1.2" },
+    { name = "pillow", specifier = ">=10.0.0" },
     { name = "pydantic", specifier = ">=2.5.3" },
     { name = "pydantic-settings", specifier = ">=2.1.0" },
     { name = "pymupdf", specifier = ">=1.24.0" },
@@ -3331,6 +3358,7 @@ requires-dist = [
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.1.0" },
     { name = "python-docx", specifier = ">=1.1.0" },
     { name = "python-pptx", specifier = ">=0.6.23" },
+    { name = "reportlab", specifier = ">=4.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8.0" },
     { name = "sentence-transformers", specifier = ">=3.0.0" },
     { name = "sme-synth-data-gen", git = "https://github.com/witgaw/sme-synth-data-gen.git" },
@@ -3340,11 +3368,15 @@ provides-extras = ["dev"]
 [[package]]
 name = "sme-synth-data-gen"
 version = "1.0.0"
-source = { git = "https://github.com/witgaw/sme-synth-data-gen.git#dfd61a7fe27b24adcaeb0278eed9ff18cdfd8d40" }
+source = { git = "https://github.com/witgaw/sme-synth-data-gen.git#8472bd93811a25a496ec46dbddbf901c652b9f4a" }
 dependencies = [
+    { name = "numpy" },
     { name = "openpyxl" },
+    { name = "pillow" },
+    { name = "pymupdf" },
     { name = "python-docx" },
     { name = "python-pptx" },
+    { name = "reportlab" },
     { name = "rich" },
 ]
 

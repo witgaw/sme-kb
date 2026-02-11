@@ -32,11 +32,18 @@ class RAGConfig(BaseSettings):
     top_k: int = Field(default=5, alias="TOP_K")
     use_reranker: bool = Field(default=False, alias="USE_RERANKER")
 
+    # RAG type
+    rag_type: Literal["basic", "knowledge_graph"] = Field(default="basic", alias="RAG_TYPE")
+
     # LLM
     llm_provider: Literal["ollama", "openrouter"] = Field(default="ollama", alias="LLM_PROVIDER")
     llm_model: str = Field(default="llama3.1:8b", alias="LLM_MODEL")
     ollama_base_url: str = Field(default="http://localhost:11434", alias="OLLAMA_BASE_URL")
     openrouter_api_key: str | None = Field(default=None, alias="OPENROUTER_API_KEY")
+
+    # OCR
+    ocr_enabled: bool = Field(default=False, alias="OCR_ENABLED")
+    ocr_model: str = Field(default="llava:7b", alias="OCR_MODEL")
 
     # Generation
     temperature: float = Field(default=0.7, alias="TEMPERATURE")

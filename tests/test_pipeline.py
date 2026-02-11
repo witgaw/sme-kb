@@ -105,6 +105,32 @@ class TestRAGPipeline:
         assert isinstance(chunks, list)
         assert len(chunks) <= 2
 
+    def test_pipeline_set_llm_model(self, tmp_db_paths, mock_embedder):
+        """Test set_llm_model changes model without reinitializing embedder."""
+        from config import RAGConfig, set_config
+        from pipeline.rag_pipeline import RAGPipeline
+
+        config = RAGConfig(
+            vector_db_path=tmp_db_paths["vector_db_path"],
+            metadata_db_path=tmp_db_paths["metadata_db_path"],
+        )
+        set_config(config)
+
+        with patch("generation.llm_client.httpx.Client"):
+            pipeline = RAGPipeline(llm_provider="ollama", llm_model="llama3.1:8b")
+
+            # Store original embedder reference
+            original_embedder = pipeline._embedder
+
+            # Change LLM model
+            pipeline.set_llm_model(provider="ollama", model="llama3.2:3b")
+
+            # Verify model changed
+            assert pipeline.llm_model == "llama3.2:3b"
+
+            # Verify embedder wasn't recreated (same object reference)
+            assert pipeline._embedder is original_embedder
+
 
 class TestRAGGraph:
     """Tests for LangGraph workflow."""

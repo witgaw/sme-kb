@@ -1,16 +1,21 @@
 """Command-line interface for RAG system."""
 
+import importlib.metadata
 import importlib.resources
 import json
+import shutil
 from pathlib import Path
 
 import click
+from scripts.evaluate import evaluate as run_eval
+from scripts.evaluate import format_markdown_report
 
 from config import get_config
 from ingestion import DocumentIngester
 from pipeline.rag_pipeline import RAGPipeline
 from storage.metadata_db import MetadataDB
 from storage.vector_db import VectorStore
+from ui.web import launch_ui
 
 
 @click.group()
@@ -44,11 +49,28 @@ def ingest(directory: Path, embedding_mode: str | None, recursive: bool):
         progress_callback=progress_callback,
     )
 
+    unreadable = stats.get("unreadable", 0)
+    unsupported = stats.get("unsupported", 0)
+
     click.echo("\nIngestion complete!")
-    click.echo(f"  Total files: {stats['total_files']}")
+    total_found = stats["total_files"] + unsupported
+    click.echo(f"  Files found: {total_found} ({stats['total_files']} supported)")
     click.echo(f"  Ingested: {stats['ingested']}")
     click.echo(f"  Skipped (duplicate): {stats['skipped_duplicate']}")
+    if unreadable:
+        click.echo(f"  Unreadable (no text): {unreadable}")
+    if unsupported:
+        click.echo(f"  Unsupported type: {unsupported}")
     click.echo(f"  Failed: {stats['failed']}")
+
+    if unreadable:
+        for filepath in stats.get("unreadable_files", []):
+            click.echo(f"    [unreadable] {Path(filepath).name}")
+
+    if unsupported:
+        for filepath in stats.get("unsupported_files", []):
+            p = Path(filepath)
+            click.echo(f"    [unsupported] {p.name} ({p.suffix})")
 
     if stats["errors"]:
         click.echo("\nErrors:")
@@ -146,7 +168,6 @@ def stats():
 @cli.command()
 def serve():
     """Start the web UI."""
-    from ui.web import launch_ui
 
     launch_ui()
 
@@ -163,6 +184,17 @@ def clear(yes: bool):
 
     metadata_db.clear_all()
     vector_db.delete_collection()
+
+    config = get_config()
+    demo_docs = Path(config.metadata_db_path).parent / "demo_docs"
+    if demo_docs.exists():
+        shutil.rmtree(demo_docs)
+        click.echo("Cleared demo_docs/")
+
+    ocr_texts = Path(config.metadata_db_path).parent / "ocr_texts"
+    if ocr_texts.exists():
+        shutil.rmtree(ocr_texts)
+        click.echo("Cleared ocr_texts/")
 
     click.echo("All data cleared.")
 
@@ -224,8 +256,6 @@ def evaluate(
 
     Uses the sme-synth-data-gen evaluation framework.
     """
-    from scripts.evaluate import evaluate as run_eval
-    from scripts.evaluate import format_markdown_report
 
     # Load ground truth
     if ground_truth is None:
@@ -320,6 +350,34 @@ def evaluate(
 
     finally:
         rag.close()
+
+
+def help_cmd():
+    """Print all available uv run commands with their descriptions."""
+    try:
+        eps = importlib.metadata.distribution("sme-kb").entry_points
+    except importlib.metadata.PackageNotFoundError:
+        click.echo("Package 'sme-kb' not found. Run: uv pip install -e .", err=True)
+        raise SystemExit(1)
+
+    # Build name -> description by importing the Click object referenced by each entry point
+    rows: list[tuple[str, str]] = []
+    for ep in eps:
+        if ep.group != "console_scripts":
+            continue
+        try:
+            obj = ep.load()
+            desc = getattr(obj, "help", None) or getattr(obj, "__doc__", None) or ""
+            desc = desc.strip().splitlines()[0] if desc.strip() else ""
+        except Exception:
+            desc = ""
+        rows.append((ep.name, desc))
+
+    rows.sort(key=lambda r: r[0])
+    max_name = max(len(r[0]) for r in rows) if rows else 0
+    click.echo("Available commands (uv run <command>):\n")
+    for name, desc in rows:
+        click.echo(f"  {name:<{max_name}}  {desc}")
 
 
 if __name__ == "__main__":
