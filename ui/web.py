@@ -72,6 +72,7 @@ _SETTINGS_DEFAULTS: dict[str, Any] = {
     "provider": "Ollama",
     "model": "",
     "top_k": 20,
+    "temperature": 0.0,
     "ocr_enabled": False,
     "ocr_model": "llava:7b",
 }
@@ -838,6 +839,14 @@ def launch_ui(server_name: str = "0.0.0.0", server_port: int = 7860):
 
                     gr.Markdown("---")
                     top_k = gr.Slider(1, 50, saved["top_k"], step=1, label="Retrieval chunks")
+                    temperature = gr.Slider(
+                        0.0,
+                        1.0,
+                        saved["temperature"],
+                        step=0.1,
+                        label="Temperature",
+                        info="0 = deterministic, higher = more creative",
+                    )
 
                     history_toggle = gr.Checkbox(
                         label="Enable conversation history",
@@ -895,6 +904,15 @@ def launch_ui(server_name: str = "0.0.0.0", server_port: int = 7860):
                 top_k.change(
                     fn=lambda v: _save_settings({"top_k": v}),
                     inputs=top_k,
+                )
+
+                def _update_temperature(v):
+                    _save_settings({"temperature": v})
+                    get_config().temperature = v
+
+                temperature.change(
+                    fn=_update_temperature,
+                    inputs=temperature,
                 )
                 ocr_toggle.change(
                     fn=lambda v: _save_settings({"ocr_enabled": v}),
@@ -1229,6 +1247,7 @@ def launch_ui(server_name: str = "0.0.0.0", server_port: int = 7860):
             s = _load_settings()
             init_provider = s["provider"]
             init_model = s["model"]
+            get_config().temperature = s.get("temperature", 0.0)
 
             # Fall back to first available Ollama model if no saved model
             if not init_model and init_provider == "Ollama":

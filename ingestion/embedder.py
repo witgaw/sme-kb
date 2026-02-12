@@ -32,7 +32,13 @@ class Embedder:
         self.batch_size = batch_size or config.embedding_batch_size
 
         if self.mode == "local":
-            self._model = SentenceTransformer(self.model_name, trust_remote_code=True)
+            try:
+                self._model = SentenceTransformer(
+                    self.model_name, trust_remote_code=True, local_files_only=True
+                )
+            except OSError:
+                # Model not cached yet — download it
+                self._model = SentenceTransformer(self.model_name, trust_remote_code=True)
         else:
             api_key = config.openrouter_api_key or os.getenv("OPENROUTER_API_KEY")
             if not api_key:

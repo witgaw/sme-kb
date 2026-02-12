@@ -25,6 +25,8 @@ dependencies = [
     "httpx>=0.27.0",
     "sme-synth-data-gen @ git+https://github.com/witgaw/sme-synth-data-gen.git",
     "langdetect>=1.0.9",
+    "pyyaml>=6.0",
+    "rich>=14.2.0",
 ]
 
 [project.optional-dependencies]
@@ -36,9 +38,6 @@ dev = [
 ]
 
 [project.scripts]
-# Main CLI group (use: uv run rag <command>)
-rag = "ui.cli:cli"
-# Direct commands (use: uv run serve, uv run ingest, etc.)
 serve = "ui.cli:serve"
 ingest = "ui.cli:ingest"
 query = "ui.cli:query"
@@ -47,6 +46,7 @@ stats = "ui.cli:stats"
 evaluate = "ui.cli:evaluate"
 clear = "ui.cli:clear"
 test = "pytest:main"
+benchmark = "ui.cli:benchmark"
 help = "ui.cli:help_cmd"
 
 [build-system]
@@ -57,7 +57,7 @@ build-backend = "hatchling.build"
 allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
-packages = ["config", "ingestion", "storage", "retrieval", "generation", "pipeline", "ui", "eval"]
+packages = ["config", "ingestion", "storage", "retrieval", "generation", "pipeline", "ui", "eval", "benchmark"]
 
 [tool.ruff]
 line-length = 100

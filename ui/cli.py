@@ -3,6 +3,7 @@
 import importlib.metadata
 import importlib.resources
 import json
+import logging
 import shutil
 from pathlib import Path
 
@@ -10,6 +11,7 @@ import click
 from scripts.evaluate import evaluate as run_eval
 from scripts.evaluate import format_markdown_report
 
+from benchmark.runner import BenchmarkRunner
 from config import get_config
 from ingestion import DocumentIngester
 from pipeline.rag_pipeline import RAGPipeline
@@ -18,14 +20,7 @@ from storage.vector_db import VectorStore
 from ui.web import launch_ui
 
 
-@click.group()
-@click.version_option(version="0.1.0")
-def cli():
-    """RAG System CLI - Document ingestion and querying."""
-    pass
-
-
-@cli.command()
+@click.command()
 @click.argument("directory", type=click.Path(exists=True, path_type=Path))
 @click.option(
     "--embedding-mode",
@@ -78,7 +73,7 @@ def ingest(directory: Path, embedding_mode: str | None, recursive: bool):
             click.echo(f"  {error['file']}: {error['error']}")
 
 
-@cli.command()
+@click.command()
 @click.argument("question")
 @click.option("--model", default=None, help="LLM model name (default: from config)")
 @click.option(
@@ -118,7 +113,7 @@ def query(
         rag.close()
 
 
-@cli.command()
+@click.command()
 @click.argument("question")
 @click.option("--top-k", default=None, type=int, help="Number of chunks to retrieve")
 def retrieve(question: str, top_k: int | None):
@@ -144,7 +139,7 @@ def retrieve(question: str, top_k: int | None):
         rag.close()
 
 
-@cli.command()
+@click.command()
 def stats():
     """Show database statistics."""
     config = get_config()
@@ -165,14 +160,14 @@ def stats():
     click.echo(f"  Metadata DB: {config.metadata_db_path}")
 
 
-@cli.command()
+@click.command()
 def serve():
     """Start the web UI."""
 
     launch_ui()
 
 
-@cli.command()
+@click.command()
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
 def clear(yes: bool):
     """Clear all data from databases."""
@@ -199,7 +194,7 @@ def clear(yes: bool):
     click.echo("All data cleared.")
 
 
-@cli.command()
+@click.command()
 @click.option(
     "--ground-truth",
     "-g",
@@ -352,6 +347,93 @@ def evaluate(
         rag.close()
 
 
+@click.command()
+@click.option(
+    "--configs-dir",
+    "-c",
+    type=click.Path(exists=True, path_type=Path),
+    default="benchmark_configs",
+    help="Directory containing benchmark YAML configs",
+)
+@click.option(
+    "--docs-dir",
+    "-d",
+    type=click.Path(exists=True, path_type=Path),
+    default="demo_docs",
+    help="Directory with documents to ingest",
+)
+@click.option(
+    "--ground-truth",
+    "-g",
+    type=click.Path(exists=True, path_type=Path),
+    default=None,
+    help="Path to ground truth JSON (default: from sme-synth-data-gen package)",
+)
+@click.option(
+    "--output-dir",
+    "-o",
+    type=click.Path(path_type=Path),
+    default="benchmark_results",
+    help="Directory for benchmark output",
+)
+@click.option(
+    "--config-names",
+    "-n",
+    multiple=True,
+    help="Only run configs with these names (default: all)",
+)
+@click.option(
+    "--force",
+    "-f",
+    is_flag=True,
+    help="Force fresh run, ignoring existing results",
+)
+def benchmark(
+    configs_dir: Path,
+    docs_dir: Path,
+    ground_truth: Path | None,
+    output_dir: Path,
+    config_names: tuple[str, ...],
+    force: bool,
+):
+    """Run benchmark evaluation across multiple RAG configurations."""
+    # Load ground truth
+    if ground_truth is not None:
+        with open(ground_truth, encoding="utf-8") as f:
+            gt_data = json.load(f)
+    else:
+        try:
+            gt_ref = importlib.resources.files("scripts").parent / "dataset" / "ground_truth.json"
+            with importlib.resources.as_file(gt_ref) as gt_path:
+                with open(gt_path, encoding="utf-8") as f:
+                    gt_data = json.load(f)
+        except (FileNotFoundError, TypeError):
+            local_path = Path("../sme-synth-data-gen/dataset/ground_truth.json")
+            if local_path.exists():
+                with open(local_path, encoding="utf-8") as f:
+                    gt_data = json.load(f)
+            else:
+                raise click.ClickException(
+                    "Ground truth file not found. Use --ground-truth to specify path."
+                )
+
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+
+    runner = BenchmarkRunner(
+        configs_dir=configs_dir,
+        docs_dir=docs_dir,
+        ground_truth=gt_data,
+        output_dir=output_dir,
+        config_names=list(config_names) if config_names else None,
+        force=force,
+    )
+
+    try:
+        runner.run()
+    except ValueError as e:
+        raise click.ClickException(str(e))
+
+
 def help_cmd():
     """Print all available uv run commands with their descriptions."""
     try:
@@ -378,7 +460,3 @@ def help_cmd():
     click.echo("Available commands (uv run <command>):\n")
     for name, desc in rows:
         click.echo(f"  {name:<{max_name}}  {desc}")
-
-
-if __name__ == "__main__":
-    cli()

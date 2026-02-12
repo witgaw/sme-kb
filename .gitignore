@@ -26,3 +26,4 @@ chroma_db
 demo_docs/
 ocr_texts/
 ui_settings.json
+benchmark_results/

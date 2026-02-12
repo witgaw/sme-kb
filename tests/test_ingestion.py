@@ -362,9 +362,7 @@ class TestOCRFallback:
         _make_text_pdf(pdf_path, text="Hi")
 
         loader = DocumentLoader(ocr_enabled=True, ocr_model="moondream")
-        with patch(
-            "ingestion.loader.ocr_pdf_pages", return_value="Full OCR output"
-        ) as mock_ocr:
+        with patch("ingestion.loader.ocr_pdf_pages", return_value="Full OCR output") as mock_ocr:
             result = loader.load(pdf_path)
 
         mock_ocr.assert_called_once()
@@ -377,9 +375,7 @@ class TestOCRFallback:
         _make_image_only_pdf(pdf_path)
 
         loader = DocumentLoader(ocr_enabled=True, ocr_model="llava:7b")
-        with patch(
-            "ingestion.loader.ocr_pdf_pages", side_effect=RuntimeError("Ollama down")
-        ):
+        with patch("ingestion.loader.ocr_pdf_pages", side_effect=RuntimeError("Ollama down")):
             result = loader.load(pdf_path)
 
         assert result["metadata"]["ocr_used"] is False
@@ -414,9 +410,7 @@ class TestOCRFallback:
         cached = ocr_dir / "scan.txt"
         cached.write_text("Cached OCR content", encoding="utf-8")
 
-        loader = DocumentLoader(
-            ocr_enabled=True, ocr_model="llava:7b", ocr_output_dir=ocr_dir
-        )
+        loader = DocumentLoader(ocr_enabled=True, ocr_model="llava:7b", ocr_output_dir=ocr_dir)
         with patch("ingestion.loader.ocr_pdf_pages") as mock_ocr:
             result = loader.load(pdf_path)
 
@@ -432,12 +426,8 @@ class TestOCRFallback:
 
         ocr_dir = tmp_path / "ocr_texts"
 
-        loader = DocumentLoader(
-            ocr_enabled=True, ocr_model="llava:7b", ocr_output_dir=ocr_dir
-        )
-        with patch(
-            "ingestion.loader.ocr_pdf_pages", return_value="Fresh OCR output"
-        ) as mock_ocr:
+        loader = DocumentLoader(ocr_enabled=True, ocr_model="llava:7b", ocr_output_dir=ocr_dir)
+        with patch("ingestion.loader.ocr_pdf_pages", return_value="Fresh OCR output") as mock_ocr:
             result = loader.load(pdf_path)
 
         mock_ocr.assert_called_once()

@@ -1,0 +1,8 @@
+name: low_temp
+description: Low temperature — now redundant, same as baseline with temp 0
+chunk_size: 1000
+chunk_overlap: 200
+top_k: 20
+use_reranker: false
+llm_model: "qwen2.5:7b"
+temperature: 0
