@@ -23,7 +23,7 @@ dependencies = [
     "pydantic>=2.5.3",
     "pydantic-settings>=2.1.0",
     "httpx>=0.27.0",
-    "sme-synth-data-gen @ git+https://github.com/witgaw/sme-synth-data-gen.git",
+    "sme-synth-data-gen",
     "langdetect>=1.0.9",
     "pyyaml>=6.0",
     "rich>=14.2.0",
@@ -47,6 +47,7 @@ evaluate = "ui.cli:evaluate"
 clear = "ui.cli:clear"
 test = "pytest:main"
 benchmark = "ui.cli:benchmark"
+generate-docs = "ui.cli:generate_docs"
 help = "ui.cli:help_cmd"
 
 [build-system]
@@ -75,3 +76,6 @@ addopts = "-v --cov-report=term-missing"
 filterwarnings = [
     "ignore:builtin type Swig.*has no __module__ attribute:DeprecationWarning",
 ]
+
+[tool.uv.sources]
+sme-synth-data-gen = { git = "https://github.com/witgaw/sme-synth-data-gen.git" }

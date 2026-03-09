@@ -1,8 +1,0 @@
-name: top_k_10
-description: Retrieve 10 chunks instead of 5 for broader context
-chunk_size: 1000
-chunk_overlap: 200
-top_k: 20
-use_reranker: false
-llm_model: "qwen2.5:7b"
-temperature: 0

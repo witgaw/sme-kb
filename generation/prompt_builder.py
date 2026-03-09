@@ -1,6 +1,22 @@
 """RAG prompt construction."""
 
+import importlib.resources
+import json
 from typing import Any
+
+
+def _load_dataset_prompts() -> tuple[dict, dict]:
+    """Load system prompts and negative-answer strings from the sme-synth-data-gen dataset."""
+    text = importlib.resources.files("dataset").joinpath("system_prompt.json").read_text()
+    data = json.loads(text)
+    system_prompts = {lang: data[lang]["system_prompt"] for lang in ("pl", "en") if lang in data}
+    negative_formats = {
+        lang: data[lang]["negative_answer_format"] for lang in ("pl", "en") if lang in data
+    }
+    return system_prompts, negative_formats
+
+
+_SYSTEM_PROMPTS, _NEGATIVE_FORMATS = _load_dataset_prompts()
 
 
 def build_rag_prompt(query: str, context: str, language: str = "pl") -> str:
@@ -14,8 +30,8 @@ def build_rag_prompt(query: str, context: str, language: str = "pl") -> str:
     Returns:
         Formatted prompt string.
     """
+    no_answer_msg = _NEGATIVE_FORMATS[language]
     if language == "pl":
-        no_answer_msg = "Nie mogę znaleźć odpowiedzi w dostępnych dokumentach."
         return f"""Odpowiedz na pytanie używając wyłącznie informacji z poniższych dokumentów.
 Jeśli odpowiedź nie znajduje się w dokumentach, powiedz "{no_answer_msg}"
 
@@ -27,7 +43,7 @@ PYTANIE: {query}
 ODPOWIEDŹ:"""
     else:
         return f"""Answer the question using only information from the documents below.
-If the answer is not in the documents, say "I cannot find the answer in the available documents."
+If the answer is not in the documents, say "{no_answer_msg}"
 
 DOCUMENTS:
 {context}
@@ -60,29 +76,16 @@ def format_context(chunks: list[dict[str, Any]], include_source: bool = True) ->
 def build_system_prompt(language: str = "pl") -> str:
     """Build system prompt for chat-style LLMs.
 
+    Loaded from the sme-synth-data-gen dataset package (dataset/system_prompt.json)
+    so that negative and partial-answer phrasing always matches what the scorer expects.
+
     Args:
         language: Language for the prompt ('pl' or 'en').
 
     Returns:
         System prompt string.
     """
-    if language == "pl":
-        return (
-            "Jesteś pomocnym asystentem, który odpowiada na pytania "
-            "wyłącznie na podstawie dostarczonych dokumentów.\n"
-            "WAŻNE: Odpowiadaj ZAWSZE po polsku, nawet jeśli pytanie zawiera angielskie słowa.\n"
-            "Jeśli nie możesz znaleźć odpowiedzi w dokumentach, przyznaj to wprost.\n"
-            "Cytuj źródła gdy to możliwe."
-        )
-    else:
-        return (
-            "You are a helpful assistant that answers questions "
-            "based solely on the provided documents.\n"
-            "IMPORTANT: Always respond in English, "
-            "even if the question contains non-English words.\n"
-            "If you cannot find the answer in the documents, admit it directly.\n"
-            "Cite sources when possible."
-        )
+    return _SYSTEM_PROMPTS[language]
 
 
 def build_rag_prompt_with_history(
@@ -117,8 +120,8 @@ def build_rag_prompt_with_history(
     messages.extend(conversation_history)
 
     # Build current query with RAG context
+    no_answer_msg = _NEGATIVE_FORMATS[language]
     if language == "pl":
-        no_answer_msg = "Nie mogę znaleźć odpowiedzi w dostępnych dokumentach."
         instruction = "Odpowiedz na pytanie używając wyłącznie informacji z poniższych dokumentów."
         current_message = f"""{instruction}
 Jeśli odpowiedź nie znajduje się w dokumentach, powiedz "{no_answer_msg}"
@@ -129,7 +132,6 @@ DOKUMENTY:
 PYTANIE: {query}"""
     else:
         instruction = "Answer the question using only information from the documents below."
-        no_answer_msg = "I cannot find the answer in the available documents."
         current_message = f"""{instruction}
 If the answer is not in the documents, say "{no_answer_msg}"
 

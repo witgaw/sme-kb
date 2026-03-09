@@ -76,12 +76,12 @@ class TestPromptBuilder:
     def test_build_system_prompt_polish(self):
         """Test building system prompt in Polish."""
         prompt = build_system_prompt(language="pl")
-        assert "pomocnym asystentem" in prompt
+        assert "asystentem analizującym dokumenty" in prompt
 
     def test_build_system_prompt_english(self):
         """Test building system prompt in English."""
         prompt = build_system_prompt(language="en")
-        assert "helpful assistant" in prompt
+        assert "assistant analyzing internal documents" in prompt
 
 
 class TestLLMClient:

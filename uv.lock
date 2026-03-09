@@ -3372,7 +3372,7 @@ provides-extras = ["dev"]
 [[package]]
 name = "sme-synth-data-gen"
 version = "1.0.0"
-source = { git = "https://github.com/witgaw/sme-synth-data-gen.git#8472bd93811a25a496ec46dbddbf901c652b9f4a" }
+source = { git = "https://github.com/witgaw/sme-synth-data-gen.git#bc6f85e37b705a6d4a7a0e7d9f475e8386c3f918" }
 dependencies = [
     { name = "numpy" },
     { name = "openpyxl" },

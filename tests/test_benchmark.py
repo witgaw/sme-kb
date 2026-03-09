@@ -423,7 +423,7 @@ class TestBenchmarkRunner:
                     "expected_answer": "Odpowiedz",
                 }
             ],
-            "multi_document_questions": [],
+            "multi_document_synthesis_questions": [],
             "negative_questions": [],
             "qualitative_questions": [],
         }

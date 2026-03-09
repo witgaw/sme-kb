@@ -1,8 +1,0 @@
-name: chunk_small
-description: Smaller chunks to test granularity — 500/100
-chunk_size: 500
-chunk_overlap: 100
-top_k: 20
-use_reranker: false
-llm_model: "qwen2.5:7b"
-temperature: 0

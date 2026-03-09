@@ -1,9 +1,11 @@
 """Benchmark runner — orchestrates multi-config RAG evaluation."""
 
 import hashlib
+import importlib.metadata
 import json
 import logging
 import re
+import subprocess
 import time
 from collections import defaultdict
 from pathlib import Path
@@ -32,6 +34,52 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 _TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$")
 
 console = Console()
+
+
+def _git_sha(repo_path: str = ".") -> str | None:
+    """Return the current HEAD SHA for the git repo at repo_path, or None."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo_path,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        return result.stdout.strip() if result.returncode == 0 else None
+    except Exception:
+        return None
+
+
+def _synth_data_gen_commit() -> str | None:
+    """Return the installed commit hash of sme-synth-data-gen from uv/pip direct_url.json."""
+    try:
+        dist = importlib.metadata.distribution("sme-synth-data-gen")
+        direct_url_path = Path(str(dist._path)) / "direct_url.json"  # type: ignore[attr-defined]
+        if direct_url_path.exists():
+            data = json.loads(direct_url_path.read_text())
+            # VCS installs: {"url": "...", "vcs_info": {"commit_id": "abc123", ...}}
+            return data.get("vcs_info", {}).get("commit_id")
+    except Exception:
+        pass
+    return None
+
+
+def _ground_truth_sha256(ground_truth: dict) -> str:
+    """Return a SHA256 hex digest of the canonical JSON of the ground truth dict."""
+    canonical = json.dumps(ground_truth, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def build_run_meta(ground_truth: dict) -> dict[str, Any]:
+    """Build a metadata block capturing provenance for a benchmark run."""
+    return {
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "sme_kb_commit": _git_sha("."),
+        "sme_synth_data_gen_commit": _synth_data_gen_commit(),
+        "sme_synth_data_gen_version": importlib.metadata.version("sme-synth-data-gen"),
+        "ground_truth_sha256": _ground_truth_sha256(ground_truth),
+    }
 
 
 class BenchmarkRunner:
@@ -84,9 +132,14 @@ class BenchmarkRunner:
         all_questions: list[dict[str, Any]] = []
         for category in [
             "exact_match_questions",
-            "multi_document_questions",
+            "multi_document_synthesis_questions",
             "negative_questions",
             "qualitative_questions",
+            "temporal_filter_questions",
+            "ocr_questions",
+            "multi_hop_ocr_questions",
+            # "database_questions",       # not supported yet
+            # "multi_hop_db_doc_questions",  # not supported yet
         ]:
             all_questions.extend(self.ground_truth.get(category, []))
 
@@ -337,6 +390,7 @@ class BenchmarkRunner:
 
                     # Evaluate
                     results = synth_evaluate(submissions, ground_truth=self.ground_truth)
+                    results["meta"] = build_run_meta(self.ground_truth)
 
                     # Save results
                     with open(results_path, "w", encoding="utf-8") as f:

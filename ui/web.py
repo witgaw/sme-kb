@@ -535,7 +535,7 @@ class RAGInterface:
                     with open(p, encoding="utf-8") as f:
                         gt = json.load(f)
                     out = []
-                    for cat in ["exact_match_questions", "multi_document_questions"]:
+                    for cat in ["exact_match_questions", "multi_document_synthesis_questions"]:
                         for q in gt.get(cat, [])[:3]:
                             if not q.get("requires_ocr") and not q.get("requires_database"):
                                 out.append(q.get("question_pl", ""))

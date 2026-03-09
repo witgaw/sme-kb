@@ -1,8 +1,8 @@
 name: baseline
-description: Default settings — 1000/200 chunks, top_k=5, no reranker
+description: Standard chunking, top_k=10, no reranker — reference config
 chunk_size: 1000
 chunk_overlap: 200
-top_k: 20
+top_k: 10
 use_reranker: false
 llm_model: "qwen2.5:7b"
 temperature: 0

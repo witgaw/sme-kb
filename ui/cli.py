@@ -276,11 +276,18 @@ def evaluate(
 
     # Extract questions to answer
     all_questions = []
-    for category in ["exact_match_questions", "multi_document_questions", "negative_questions"]:
+    for category in [
+        "exact_match_questions",
+        "multi_document_synthesis_questions",
+        "negative_questions",
+        "qualitative_questions",
+        "temporal_filter_questions",
+        "ocr_questions",
+        "multi_hop_ocr_questions",
+        # "database_questions",       # not supported yet
+        # "multi_hop_db_doc_questions",  # not supported yet
+    ]:
         all_questions.extend(gt_data.get(category, []))
-
-    # Also include qualitative if present
-    all_questions.extend(gt_data.get("qualitative_questions", []))
 
     # Filter questions
     filtered_questions = []
@@ -432,6 +439,85 @@ def benchmark(
         runner.run()
     except ValueError as e:
         raise click.ClickException(str(e))
+
+
+@click.command("generate-docs")
+@click.option(
+    "--output-dir",
+    "-o",
+    default="demo_docs",
+    show_default=True,
+    type=click.Path(path_type=Path),
+    help="Directory to write generated documents into.",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    help="Overwrite existing files.",
+)
+def generate_docs(output_dir: Path, force: bool):
+    """Generate synthetic SME documents from the sme-synth-data-gen dataset."""
+    from scripts.generate_files import (
+        generate_docx,
+        generate_eml,
+        generate_md,
+        generate_pdf_easy,
+        generate_pdf_hard,
+        generate_pptx,
+        generate_xlsx,
+        set_file_timestamps,
+    )
+
+    documents_text = importlib.resources.files("dataset").joinpath("documents.json").read_text()
+    docs = json.loads(documents_text)["documents"]
+
+    if force and output_dir.exists():
+        shutil.rmtree(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    generated = skipped = existing = 0
+    for doc in docs:
+        fmt = doc.get("format", "")
+        doc_type = doc["type"]
+        dest = output_dir / doc["filename"]
+
+        if dest.exists() and not force:
+            existing += 1
+            continue
+
+        try:
+            if fmt == "pdf":
+                if doc.get("pdf_difficulty", "easy") == "easy":
+                    generate_pdf_easy(doc, output_dir)
+                else:
+                    generate_pdf_hard(doc, output_dir)
+            elif fmt == "eml" or "email" in doc_type:
+                generate_eml(doc, output_dir)
+            elif fmt == "md" or doc_type in ["meeting_notes", "project_kickoff"]:
+                generate_md(doc, output_dir)
+            elif fmt == "docx" or doc_type in [
+                "report_quarterly", "report_monthly", "report_project", "proposal"
+            ]:
+                generate_docx(doc, output_dir)
+            elif fmt == "xlsx" or "spreadsheet" in doc_type:
+                generate_xlsx(doc, output_dir)
+            elif fmt == "pptx" or "presentation" in doc_type:
+                generate_pptx(doc, output_dir)
+            else:
+                click.echo(f"  Unknown format for {doc['id']}: {doc_type}/{fmt}", err=True)
+                skipped += 1
+                continue
+
+            set_file_timestamps(dest, doc)
+            generated += 1
+        except Exception as e:
+            click.echo(f"  Error generating {doc['filename']}: {e}", err=True)
+            skipped += 1
+
+    if existing:
+        click.echo(f"Skipped {existing} existing files (use --force to overwrite).")
+    suffix = f" {skipped} failed." if skipped else ""
+    click.echo(f"Generated {generated} files to {output_dir}/{suffix}")
 
 
 def help_cmd():

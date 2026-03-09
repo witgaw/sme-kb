@@ -47,9 +47,14 @@ class SyntheticEvaluator:
 
         for category in [
             "exact_match_questions",
-            "multi_document_questions",
+            "multi_document_synthesis_questions",
             "negative_questions",
             "qualitative_questions",
+            "temporal_filter_questions",
+            "ocr_questions",
+            "multi_hop_ocr_questions",
+            # "database_questions",       # not supported yet
+            # "multi_hop_db_doc_questions",  # not supported yet
         ]:
             all_questions.extend(self.ground_truth.get(category, []))
 

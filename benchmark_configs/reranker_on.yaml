@@ -1,8 +1,8 @@
 name: reranker_on
-description: Cross-encoder reranking enabled with default chunking
+description: Cross-encoder reranking enabled — same chunking as baseline
 chunk_size: 1000
 chunk_overlap: 200
-top_k: 20
+top_k: 10
 use_reranker: true
 llm_model: "qwen2.5:7b"
 temperature: 0

@@ -1,9 +1,0 @@
-name: current_setup
-description: Current local setup — naive RAG with 20 chunks
-chunk_size: 1000
-chunk_overlap: 200
-top_k: 20
-use_reranker: false
-llm_provider: ollama
-llm_model: "qwen2.5:7b"
-temperature: 0

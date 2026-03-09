@@ -1,8 +1,8 @@
 name: chunk_large
-description: Larger chunks for more context per retrieval — 2000/400
+description: Larger chunks (2000/400) — more context per retrieved passage
 chunk_size: 2000
 chunk_overlap: 400
-top_k: 20
+top_k: 10
 use_reranker: false
 llm_model: "qwen2.5:7b"
 temperature: 0

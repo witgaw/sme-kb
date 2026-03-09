@@ -1,0 +1,11 @@
+name: ocr
+description: OCR enabled via vision model — includes OCR and multi-hop OCR questions
+chunk_size: 1000
+chunk_overlap: 200
+top_k: 10
+use_reranker: false
+llm_model: "qwen2.5:7b"
+ocr_enabled: true
+ocr_model: "llava:7b"
+skip_ocr: false
+temperature: 0
