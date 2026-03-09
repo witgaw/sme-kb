@@ -11,6 +11,8 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
+import click
+import openai
 import yaml
 from rich.console import Console
 from rich.panel import Panel
@@ -390,6 +392,16 @@ class BenchmarkRunner:
                                 result = rag.query(question_text, return_sources=False)
                                 answer = result.get("answer", "")
                                 submissions[qid] = answer
+                            except openai.PermissionDeniedError as e:
+                                raise click.ClickException(
+                                    f"OpenRouter permission denied for config '{cfg.name}': {e}. "
+                                    "Check your API key and account credits."
+                                ) from e
+                            except openai.AuthenticationError as e:
+                                raise click.ClickException(
+                                    f"OpenRouter authentication failed for config '{cfg.name}':"
+                                    f" {e}."
+                                ) from e
                             except Exception:
                                 logger.exception("Error querying %s for config %s", qid, cfg.name)
                                 submissions[qid] = ""

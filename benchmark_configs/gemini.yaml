@@ -1,0 +1,14 @@
+name: gemini
+description: Gemini 2.5 Pro via OpenRouter with Gemini Flash OCR
+chunk_size: 1000
+chunk_overlap: 200
+top_k: 10
+use_reranker: false
+llm_provider: openrouter
+llm_model: "google/gemini-2.5-pro"
+temperature: 0
+ocr_enabled: true
+ocr_provider: openrouter
+ocr_model: "google/gemini-flash-1.5"
+skip_ocr: false
+skip_db: true

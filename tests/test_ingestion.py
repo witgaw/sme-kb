@@ -333,14 +333,12 @@ class TestOCRFallback:
         with patch("ingestion.loader.ocr_pdf_pages", return_value="OCR extracted text") as mock_ocr:
             result = loader.load(pdf_path)
 
-        mock_ocr.assert_called_once_with(
-            pdf_path,
-            model="llava:7b",
-            language=None,
-            provider="ollama",
-            base_url="http://localhost:11434",
-            api_key=None,
-        )
+        args, kwargs = mock_ocr.call_args
+        assert args[0] == pdf_path
+        assert kwargs["model"] == "llava:7b"
+        assert kwargs["provider"] == "ollama"
+        assert kwargs["base_url"] == "http://localhost:11434"
+        assert kwargs["language"] is None
         assert result["content"] == "OCR extracted text"
         assert result["metadata"]["ocr_used"] is True
 

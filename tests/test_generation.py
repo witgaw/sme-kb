@@ -98,20 +98,16 @@ class TestLLMClient:
         assert client.base_url == "http://localhost:11434"
 
     def test_openrouter_requires_api_key(self, test_config):
-        """Test OpenRouter client requires API key."""
-        # Clear any existing API key
-        import os
-
+        """Test OpenRouter client raises when no API key is available."""
+        from config import RAGConfig, set_config
         from generation.llm_client import LLMClient
 
-        original_key = os.environ.pop("OPENROUTER_API_KEY", None)
-
+        set_config(RAGConfig(OPENROUTER_API_KEY=None))
         try:
             with pytest.raises(ValueError, match="OPENROUTER_API_KEY required"):
                 LLMClient(provider="openrouter", model="test")
         finally:
-            if original_key:
-                os.environ["OPENROUTER_API_KEY"] = original_key
+            set_config(test_config)
 
     def test_generate_ollama(self, test_config, mock_llm_client):
         """Test generation with Ollama (mocked)."""
