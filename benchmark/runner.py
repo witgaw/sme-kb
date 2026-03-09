@@ -71,6 +71,24 @@ def _ground_truth_sha256(ground_truth: dict) -> str:
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
+def _submissions_filename(cfg: "BenchmarkConfig") -> str:
+    """Derive a human-readable submissions filename from a config.
+
+    Format: sub_{llm_slug}[_ocr_{ocr_slug}].json
+    e.g. sub_qwen2.5-7b.json or sub_qwen2.5-7b_ocr_gemini-flash-1.5.json
+    """
+
+    def _slug(model: str) -> str:
+        # Keep only the model name part (after any org/ prefix), replace slashes
+        name = model.split("/")[-1]
+        return re.sub(r"[^a-zA-Z0-9.\-]", "-", name)
+
+    name = f"sub_{_slug(cfg.llm_model)}"
+    if cfg.ocr_enabled:
+        name += f"_ocr_{_slug(cfg.ocr_model)}"
+    return name + ".json"
+
+
 def build_run_meta(ground_truth: dict) -> dict[str, Any]:
     """Build a metadata block capturing provenance for a benchmark run."""
     return {
@@ -172,6 +190,7 @@ class BenchmarkRunner:
             TEMPERATURE=cfg.temperature,
             MAX_TOKENS=cfg.max_tokens,
             OCR_ENABLED=cfg.ocr_enabled,
+            OCR_PROVIDER=cfg.ocr_provider,
             OCR_MODEL=cfg.ocr_model,
         )
         set_config(rag_cfg)
@@ -384,13 +403,23 @@ class BenchmarkRunner:
 
                     elapsed = time.monotonic() - t0
 
-                    # Save submissions
-                    with open(config_dir / "submissions.json", "w", encoding="utf-8") as f:
-                        json.dump(submissions, f, indent=2, ensure_ascii=False)
+                    # Save submissions — plain file for scorer + named file with metadata
+                    meta = build_run_meta(self.ground_truth)
+                    submissions_with_meta = {
+                        "_meta": {**meta, "config": cfg.name, **cfg.model_dump()},
+                        **submissions,
+                    }
+                    named_path = config_dir / _submissions_filename(cfg)
+                    for path, data in [
+                        (config_dir / "submissions.json", submissions),
+                        (named_path, submissions_with_meta),
+                    ]:
+                        with open(path, "w", encoding="utf-8") as f:
+                            json.dump(data, f, indent=2, ensure_ascii=False)
 
                     # Evaluate
                     results = synth_evaluate(submissions, ground_truth=self.ground_truth)
-                    results["meta"] = build_run_meta(self.ground_truth)
+                    results["meta"] = meta
 
                     # Save results
                     with open(results_path, "w", encoding="utf-8") as f:

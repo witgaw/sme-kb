@@ -335,9 +335,11 @@ class TestOCRFallback:
 
         mock_ocr.assert_called_once_with(
             pdf_path,
-            base_url="http://localhost:11434",
             model="llava:7b",
             language=None,
+            provider="ollama",
+            base_url="http://localhost:11434",
+            api_key=None,
         )
         assert result["content"] == "OCR extracted text"
         assert result["metadata"]["ocr_used"] is True

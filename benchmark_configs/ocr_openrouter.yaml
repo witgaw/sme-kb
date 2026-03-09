@@ -1,5 +1,5 @@
-name: ocr
-description: OCR enabled via vision model — includes OCR and multi-hop OCR questions
+name: ocr_openrouter
+description: OCR via OpenRouter Gemini Flash — hosted vision model for scanned PDFs
 chunk_size: 1000
 chunk_overlap: 200
 top_k: 10
@@ -8,7 +8,7 @@ llm_provider: ollama
 llm_model: "qwen2.5:7b"
 temperature: 0
 ocr_enabled: true
-ocr_provider: ollama
-ocr_model: "llava:7b"
+ocr_provider: openrouter
+ocr_model: "google/gemini-flash-1.5"
 skip_ocr: false
 skip_db: true

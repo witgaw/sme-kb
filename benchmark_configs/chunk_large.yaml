@@ -4,5 +4,11 @@ chunk_size: 2000
 chunk_overlap: 400
 top_k: 10
 use_reranker: false
+llm_provider: ollama
 llm_model: "qwen2.5:7b"
 temperature: 0
+ocr_enabled: false
+ocr_provider: ollama
+ocr_model: "llava:7b"
+skip_ocr: true
+skip_db: true

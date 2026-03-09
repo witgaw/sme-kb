@@ -32,6 +32,7 @@ class BenchmarkConfig(BaseModel):
 
     # OCR / VLM
     ocr_enabled: bool = False
+    ocr_provider: Literal["ollama", "openrouter"] = "ollama"
     ocr_model: str = "llava:7b"
 
     # Filtering

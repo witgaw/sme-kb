@@ -57,6 +57,7 @@ class DocumentIngester:
 
         self.loader = DocumentLoader(
             ocr_enabled=config.ocr_enabled,
+            ocr_provider=config.ocr_provider,
             ocr_model=config.ocr_model,
             ocr_output_dir=ocr_output_dir,
         )

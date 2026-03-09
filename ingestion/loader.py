@@ -28,13 +28,16 @@ class DocumentLoader:
     def __init__(
         self,
         ocr_enabled: bool | None = None,
+        ocr_provider: str | None = None,
         ocr_model: str | None = None,
         ocr_output_dir: Path | None = None,
     ):
         config = get_config()
         self._ocr_enabled = ocr_enabled if ocr_enabled is not None else config.ocr_enabled
+        self._ocr_provider = ocr_provider or config.ocr_provider
         self._ocr_model = ocr_model or config.ocr_model
         self._ollama_base_url = config.ollama_base_url
+        self._openrouter_api_key = config.openrouter_api_key
         self._ocr_output_dir = ocr_output_dir
         self.ocr_language: str | None = None
 
@@ -256,9 +259,11 @@ class DocumentLoader:
                 try:
                     ocr_text = ocr_pdf_pages(
                         filepath,
-                        base_url=self._ollama_base_url,
                         model=self._ocr_model,
                         language=self.ocr_language,
+                        provider=self._ocr_provider,
+                        base_url=self._ollama_base_url,
+                        api_key=self._openrouter_api_key,
                     )
                     if ocr_text.strip():
                         content = ocr_text

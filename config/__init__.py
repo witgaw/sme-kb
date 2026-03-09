@@ -43,6 +43,7 @@ class RAGConfig(BaseSettings):
 
     # OCR
     ocr_enabled: bool = Field(default=False, alias="OCR_ENABLED")
+    ocr_provider: Literal["ollama", "openrouter"] = Field(default="ollama", alias="OCR_PROVIDER")
     ocr_model: str = Field(default="llava:7b", alias="OCR_MODEL")
 
     # Generation
